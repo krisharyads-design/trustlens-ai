@@ -229,6 +229,10 @@ export default function HomePage() {
   }
 
   async function handleAnalyze() {
+    if (loading) {
+      return;
+    }
+
     if (!selectedFile) {
       setError("Please choose an image or video first.");
       return;

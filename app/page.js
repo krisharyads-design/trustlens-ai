@@ -16,6 +16,15 @@ import {
 import { auth, db, provider } from "./firebase";
 
 const ACCEPTED_TYPES = "image/*,video/*";
+const ANALYZE_COOLDOWN_SECONDS = 30;
+const RETRY_DELAY_MS = 2000;
+const FALLBACK_RESULT = {
+  status: "Suspicious",
+  trustScore: 60,
+  reason: "AI busy, estimated result shown",
+  context: "AI is busy, showing estimated result",
+  isEstimated: true,
+};
 
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
@@ -40,6 +49,12 @@ function waitForEvent(element, eventName) {
     };
 
     element.addEventListener(eventName, handler);
+  });
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
   });
 }
 
@@ -123,12 +138,14 @@ function getUserHistoryCollection(uid) {
 
 export default function HomePage() {
   const inputRef = useRef(null);
+  const analyzeInFlightRef = useRef(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
+  const [busyMessage, setBusyMessage] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [user, setUser] = useState(null);
   const [history, setHistory] = useState([]);
@@ -212,6 +229,7 @@ export default function HomePage() {
   function handleFileSelect(file) {
     setSelectedFile(file);
     setError("");
+    setBusyMessage("");
   }
 
   async function handleGoogleLogin() {
@@ -228,6 +246,7 @@ export default function HomePage() {
       setError("");
       await signOut(auth);
       setResult(null);
+      setBusyMessage("");
     } catch (err) {
       setError(err.message || "Logout failed.");
     }
@@ -245,6 +264,7 @@ export default function HomePage() {
       trustScore: savedResult.trustScore,
       reason: savedResult.reason,
       context: savedResult.context,
+      isEstimated: Boolean(savedResult.isEstimated),
       createdAt: serverTimestamp(),
     });
 
@@ -270,8 +290,49 @@ export default function HomePage() {
     }
   }
 
+  async function createAnalyzePayload(file) {
+    if (file.type.startsWith("video/")) {
+      const frames = await extractVideoFrames(file);
+      return {
+        kind: "video",
+        fileName: file.name,
+        mimeType: file.type,
+        frames,
+      };
+    }
+
+    const data = await fileToBase64(file);
+    return {
+      kind: "image",
+      fileName: file.name,
+      mimeType: file.type,
+      image: {
+        mimeType: file.type,
+        data,
+      },
+    };
+  }
+
+  async function requestAnalysis(payload) {
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.error || "Analysis failed.");
+    }
+
+    return data;
+  }
+
   async function handleAnalyze() {
-    if (loading || cooldown > 0) {
+    if (analyzeInFlightRef.current || loading || cooldown > 0) {
       return;
     }
 
@@ -280,58 +341,27 @@ export default function HomePage() {
       return;
     }
 
+    analyzeInFlightRef.current = true;
     setLoading(true);
     setError("");
+    setBusyMessage("");
     setResult(null);
 
     try {
-      let payload;
+      const payload = await createAnalyzePayload(selectedFile);
+      let data;
 
-      if (selectedFile.type.startsWith("video/")) {
-        const frames = await extractVideoFrames(selectedFile);
-        payload = {
-          kind: "video",
-          fileName: selectedFile.name,
-          mimeType: selectedFile.type,
-          frames,
-        };
-      } else {
-        const data = await fileToBase64(selectedFile);
-        payload = {
-          kind: "image",
-          fileName: selectedFile.name,
-          mimeType: selectedFile.type,
-          image: {
-            mimeType: selectedFile.type,
-            data,
-          },
-        };
-      }
+      try {
+        data = await requestAnalysis(payload);
+      } catch {
+        await delay(RETRY_DELAY_MS);
 
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        const message = data.error || "Analysis failed.";
-        const lowerMessage = message.toLowerCase();
-
-        if (
-          response.status === 429 ||
-          lowerMessage.includes("quota") ||
-          lowerMessage.includes("rate limit") ||
-          lowerMessage.includes("resource exhausted")
-        ) {
-          throw new Error("Server busy, please wait a few seconds and try again");
+        try {
+          data = await requestAnalysis(payload);
+        } catch {
+          data = FALLBACK_RESULT;
+          setBusyMessage("AI is busy, showing estimated result");
         }
-
-        throw new Error(message);
       }
 
       const nextResult = {
@@ -344,14 +374,16 @@ export default function HomePage() {
     } catch (err) {
       setError(err.message || "Something went wrong.");
     } finally {
+      analyzeInFlightRef.current = false;
       setLoading(false);
-      setCooldown(30);
+      setCooldown(ANALYZE_COOLDOWN_SECONDS);
     }
   }
 
   function showHistoryItem(item) {
     setSelectedHistoryId(item.id);
     setResult(item);
+    setBusyMessage(item.isEstimated ? "AI is busy, showing estimated result" : "");
   }
 
   const activeResult = result
@@ -535,6 +567,10 @@ export default function HomePage() {
                 )}
               </button>
 
+              {cooldown > 0 ? (
+                <p className="cooldown-text">Next analysis available in {cooldown}s.</p>
+              ) : null}
+
               {error ? <p className="error">{error}</p> : null}
             </div>
 
@@ -563,6 +599,12 @@ export default function HomePage() {
                   </div>
 
                   <TrustMeter score={activeResult.trustScore} />
+
+                  {activeResult.isEstimated ? (
+                    <p className="busy-message">
+                      {busyMessage || "AI is busy, showing estimated result"}
+                    </p>
+                  ) : null}
 
                   <div className="result-block">
                     <p className="eyebrow">Reason</p>
@@ -1091,6 +1133,22 @@ export default function HomePage() {
           margin-top: 12px;
           color: #fca5a5;
           font-size: 14px;
+        }
+
+        .cooldown-text {
+          margin-top: 12px;
+          color: #a1a1b3;
+          font-size: 14px;
+        }
+
+        .busy-message {
+          padding: 12px 14px;
+          border-radius: 12px;
+          background: rgba(245, 158, 11, 0.12);
+          border: 1px solid rgba(245, 158, 11, 0.24);
+          color: #fcd34d;
+          font-size: 14px;
+          line-height: 1.5;
         }
 
         h1,

@@ -85,6 +85,20 @@ function formatHistoryTitle(item) {
   return item.fileName || `${item.status} result`;
 }
 
+function getStatusFromScore(score) {
+  const safeScore = Math.max(0, Math.min(100, Number(score) || 0));
+
+  if (safeScore > 85) {
+    return "Real";
+  }
+
+  if (safeScore >= 50) {
+    return "Suspicious";
+  }
+
+  return "Fake";
+}
+
 function TrustMeter({ score = 0 }) {
   const safeScore = Math.max(0, Math.min(100, Number(score) || 0));
 
@@ -280,9 +294,16 @@ export default function HomePage() {
     setResult(item);
   }
 
+  const activeResult = result
+    ? { ...result, status: getStatusFromScore(result.trustScore) }
+    : null;
+
   return (
     <>
       <main className="page">
+        <div className="page-glow page-glow-left" />
+        <div className="page-glow page-glow-right" />
+
         <aside className="sidebar">
           <div className="brand">
             <div className="brand-mark">TL</div>
@@ -297,7 +318,7 @@ export default function HomePage() {
               Login with Google
             </button>
           ) : (
-            <div className="profile-card">
+            <div className="profile-card glass-card">
               <img
                 className="avatar"
                 src={user.photoURL || "https://placehold.co/80x80/png"}
@@ -313,7 +334,7 @@ export default function HomePage() {
             </div>
           )}
 
-          <div className="history-panel">
+          <div className="history-panel glass-card">
             <div className="panel-head">
               <p className="kicker">History</p>
               <span>{history.length}</span>
@@ -322,21 +343,25 @@ export default function HomePage() {
             {user ? (
               history.length > 0 ? (
                 <div className="history-list">
-                  {history.map((item) => (
-                    <button
-                      key={item.id}
-                      className={`history-item ${
-                        selectedHistoryId === item.id ? "active" : ""
-                      }`}
-                      onClick={() => showHistoryItem(item)}
-                    >
-                      <span className="history-title">{formatHistoryTitle(item)}</span>
-                      <div className="history-meta">
-                        <small>{item.status}</small>
-                        <small>{item.trustScore}%</small>
-                      </div>
-                    </button>
-                  ))}
+                  {history.map((item) => {
+                    const itemStatus = getStatusFromScore(item.trustScore);
+
+                    return (
+                      <button
+                        key={item.id}
+                        className={`history-item ${
+                          selectedHistoryId === item.id ? "active" : ""
+                        }`}
+                        onClick={() => showHistoryItem(item)}
+                      >
+                        <span className="history-title">{formatHistoryTitle(item)}</span>
+                        <div className="history-meta">
+                          <small>{itemStatus}</small>
+                          <small>{item.trustScore}%</small>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="muted">No history yet. Analyze a file to save results.</p>
@@ -348,7 +373,7 @@ export default function HomePage() {
         </aside>
 
         <section className="main">
-          <div className="hero-card fade-in">
+          <div className="hero-card glass-card fade-in">
             <p className="kicker">AI-powered trust checking</p>
             <h1>Analyze images and videos with a polished, simple workflow.</h1>
             <p className="hero-copy">
@@ -358,7 +383,7 @@ export default function HomePage() {
           </div>
 
           <div className="content-grid">
-            <div className="upload-card fade-in">
+            <div className="upload-card glass-card fade-in">
               <div
                 className={`upload-box ${isDragging ? "dragging" : ""}`}
                 onDragOver={(event) => {
@@ -387,7 +412,9 @@ export default function HomePage() {
                 />
 
                 {previewUrl ? (
-                  <img className="preview-image" src={previewUrl} alt="Preview" />
+                  <div className="preview-shell">
+                    <img className="preview-image" src={previewUrl} alt="Preview" />
+                  </div>
                 ) : (
                   <div className="upload-placeholder">
                     <div className="upload-icon">↑</div>
@@ -424,7 +451,7 @@ export default function HomePage() {
                 {loading ? (
                   <span className="loading-inline">
                     <span className="spinner" />
-                    Analyzing...
+                    <span className="loading-text">Analyzing...</span>
                   </span>
                 ) : (
                   "Analyze Media"
@@ -434,7 +461,9 @@ export default function HomePage() {
               {error ? <p className="error">{error}</p> : null}
             </div>
 
-            <div className="result-card fade-in">
+            <div className="result-card glass-card fade-in">
+              <div className="card-glow" />
+
               {loading ? (
                 <div className="loading-state">
                   <span className="spinner large" />
@@ -447,30 +476,30 @@ export default function HomePage() {
                     </p>
                   </div>
                 </div>
-              ) : result ? (
-                <>
+              ) : activeResult ? (
+                <div className="result-body fade-in">
                   <div className="result-top">
                     <div>
                       <p className="result-label">Latest Result</p>
-                      <h3>{result.fileName || "Selected Result"}</h3>
+                      <h3>{activeResult.fileName || "Selected Result"}</h3>
                     </div>
-                    <span className={`status-badge ${result.status?.toLowerCase()}`}>
-                      {result.status}
+                    <span className={`status-badge ${activeResult.status.toLowerCase()}`}>
+                      {activeResult.status}
                     </span>
                   </div>
 
-                  <TrustMeter score={result.trustScore} />
+                  <TrustMeter score={activeResult.trustScore} />
 
                   <div className="result-section">
                     <p className="result-label">Reason</p>
-                    <p>{result.reason}</p>
+                    <p>{activeResult.reason}</p>
                   </div>
 
                   <div className="result-section">
                     <p className="result-label">Context</p>
-                    <p>{result.context}</p>
+                    <p>{activeResult.context}</p>
                   </div>
-                </>
+                </div>
               ) : (
                 <div className="empty-state">
                   <div className="empty-orb" />
@@ -491,12 +520,54 @@ export default function HomePage() {
         .page {
           min-height: 100vh;
           display: flex;
+          position: relative;
+          overflow: hidden;
           background:
-            radial-gradient(circle at top, rgba(88, 101, 242, 0.22), transparent 28%),
-            radial-gradient(circle at bottom right, rgba(15, 185, 255, 0.12), transparent 24%),
-            linear-gradient(180deg, #08101f 0%, #04070d 100%);
+            radial-gradient(circle at top left, rgba(38, 87, 255, 0.16), transparent 28%),
+            linear-gradient(135deg, #07111f 0%, #10142a 42%, #1a1030 100%);
           color: #f5f7ff;
           font-family: "Segoe UI", Arial, sans-serif;
+        }
+
+        .page-glow {
+          position: absolute;
+          border-radius: 999px;
+          filter: blur(90px);
+          pointer-events: none;
+          opacity: 0.45;
+        }
+
+        .page-glow-left {
+          top: 120px;
+          left: 260px;
+          width: 260px;
+          height: 260px;
+          background: rgba(68, 147, 255, 0.24);
+        }
+
+        .page-glow-right {
+          right: 120px;
+          bottom: 100px;
+          width: 320px;
+          height: 320px;
+          background: rgba(143, 76, 255, 0.18);
+        }
+
+        .glass-card {
+          backdrop-filter: blur(18px);
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+          transition:
+            transform 0.25s ease,
+            box-shadow 0.25s ease,
+            border-color 0.25s ease,
+            background 0.25s ease;
+        }
+
+        .glass-card:hover {
+          border-color: rgba(255, 255, 255, 0.16);
+          box-shadow: 0 22px 70px rgba(0, 0, 0, 0.32);
         }
 
         .sidebar {
@@ -504,9 +575,10 @@ export default function HomePage() {
           padding: 24px 18px;
           position: sticky;
           top: 0;
+          z-index: 1;
           height: 100vh;
-          backdrop-filter: blur(18px);
-          background: rgba(10, 14, 24, 0.72);
+          backdrop-filter: blur(20px);
+          background: rgba(8, 12, 22, 0.55);
           border-right: 1px solid rgba(255, 255, 255, 0.08);
           display: flex;
           flex-direction: column;
@@ -535,11 +607,7 @@ export default function HomePage() {
         .hero-card,
         .upload-card,
         .result-card {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.08);
           border-radius: 22px;
-          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
-          backdrop-filter: blur(18px);
         }
 
         .profile-card {
@@ -598,25 +666,29 @@ export default function HomePage() {
           flex-direction: column;
           gap: 8px;
           transition:
-            transform 0.2s ease,
-            background 0.2s ease,
-            border-color 0.2s ease;
+            transform 0.22s ease,
+            background 0.22s ease,
+            border-color 0.22s ease,
+            box-shadow 0.22s ease;
         }
 
         .history-item:hover {
-          transform: translateY(-2px) scale(1.01);
+          transform: translateY(-2px) scale(1.02);
           background: rgba(255, 255, 255, 0.08);
           border-color: rgba(124, 77, 255, 0.4);
+          box-shadow: 0 12px 28px rgba(124, 77, 255, 0.12);
         }
 
         .history-item.active {
           background: linear-gradient(
             135deg,
-            rgba(68, 147, 255, 0.16),
+            rgba(68, 147, 255, 0.18),
             rgba(124, 77, 255, 0.16)
           );
-          border-color: rgba(124, 77, 255, 0.55);
-          box-shadow: 0 0 0 1px rgba(124, 77, 255, 0.12);
+          border-color: rgba(124, 77, 255, 0.6);
+          box-shadow:
+            0 0 0 1px rgba(124, 77, 255, 0.14),
+            0 0 22px rgba(124, 77, 255, 0.22);
         }
 
         .history-title {
@@ -631,6 +703,7 @@ export default function HomePage() {
 
         .main {
           flex: 1;
+          z-index: 1;
           padding: 28px;
           display: flex;
           flex-direction: column;
@@ -641,10 +714,15 @@ export default function HomePage() {
         .upload-card,
         .result-card {
           padding: 24px;
+          position: relative;
         }
 
         .hero-card {
           max-width: 920px;
+        }
+
+        .hero-card:hover {
+          transform: translateY(-2px);
         }
 
         .hero-copy {
@@ -660,30 +738,38 @@ export default function HomePage() {
           align-items: start;
         }
 
+        .upload-card:hover,
+        .result-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 24px 75px rgba(0, 0, 0, 0.34);
+        }
+
         .upload-box {
           min-height: 360px;
           padding: 18px;
           border-radius: 22px;
           border: 1.5px dashed rgba(124, 77, 255, 0.35);
           background:
-            linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.02)),
-            rgba(7, 10, 18, 0.7);
+            linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
+            rgba(7, 10, 18, 0.58);
           display: flex;
           flex-direction: column;
           justify-content: space-between;
           transition:
             transform 0.25s ease,
             border-color 0.25s ease,
-            background 0.25s ease;
+            background 0.25s ease,
+            box-shadow 0.25s ease;
         }
 
         .upload-box:hover,
         .upload-box.dragging {
           transform: translateY(-2px);
-          border-color: rgba(88, 101, 242, 0.9);
+          border-color: rgba(88, 101, 242, 0.95);
           background:
             linear-gradient(180deg, rgba(88, 101, 242, 0.08), rgba(124, 77, 255, 0.06)),
-            rgba(7, 10, 18, 0.84);
+            rgba(7, 10, 18, 0.8);
+          box-shadow: 0 0 30px rgba(88, 101, 242, 0.12);
         }
 
         .hidden-input {
@@ -706,13 +792,24 @@ export default function HomePage() {
           display: grid;
           place-items: center;
           font-size: 1.8rem;
-          background: linear-gradient(135deg, rgba(68, 147, 255, 0.18), rgba(124, 77, 255, 0.18));
+          background: linear-gradient(
+            135deg,
+            rgba(68, 147, 255, 0.18),
+            rgba(124, 77, 255, 0.18)
+          );
           border: 1px solid rgba(255, 255, 255, 0.1);
+          box-shadow: 0 12px 30px rgba(68, 147, 255, 0.12);
         }
 
         .upload-title {
           font-size: 1.1rem;
           font-weight: 600;
+        }
+
+        .preview-shell {
+          overflow: hidden;
+          border-radius: 18px;
+          box-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
         }
 
         .preview-image {
@@ -721,6 +818,12 @@ export default function HomePage() {
           object-fit: cover;
           border-radius: 18px;
           border: 1px solid rgba(255, 255, 255, 0.08);
+          transition: transform 0.35s ease, filter 0.35s ease;
+        }
+
+        .preview-image:hover {
+          transform: scale(1.04);
+          filter: saturate(1.05);
         }
 
         .upload-footer {
@@ -746,7 +849,8 @@ export default function HomePage() {
           transition:
             transform 0.2s ease,
             box-shadow 0.2s ease,
-            opacity 0.2s ease;
+            opacity 0.2s ease,
+            filter 0.2s ease;
         }
 
         .primary-sidebar-button,
@@ -766,6 +870,7 @@ export default function HomePage() {
         .analyze-button:hover {
           transform: translateY(-2px) scale(1.01);
           box-shadow: 0 22px 50px rgba(70, 105, 255, 0.35);
+          filter: brightness(1.04);
         }
 
         .primary-sidebar-button:active,
@@ -782,7 +887,7 @@ export default function HomePage() {
         }
 
         .analyze-button:disabled {
-          opacity: 0.7;
+          opacity: 0.72;
           cursor: not-allowed;
           transform: none;
           box-shadow: none;
@@ -817,6 +922,10 @@ export default function HomePage() {
           justify-content: center;
         }
 
+        .loading-text {
+          animation: pulseText 1.2s ease-in-out infinite;
+        }
+
         .spinner {
           width: 18px;
           height: 18px;
@@ -833,19 +942,23 @@ export default function HomePage() {
 
         .result-card {
           min-height: 420px;
-          position: relative;
           overflow: hidden;
         }
 
-        .result-card::before {
-          content: "";
+        .card-glow {
           position: absolute;
-          inset: -80px auto auto -80px;
+          top: -70px;
+          left: -40px;
           width: 180px;
           height: 180px;
-          background: rgba(124, 77, 255, 0.14);
+          background: rgba(124, 77, 255, 0.16);
           filter: blur(50px);
           pointer-events: none;
+        }
+
+        .result-body {
+          position: relative;
+          z-index: 1;
         }
 
         .result-top,
@@ -862,21 +975,25 @@ export default function HomePage() {
           font-size: 0.82rem;
           font-weight: 700;
           border: 1px solid rgba(255, 255, 255, 0.08);
+          transition: transform 0.25s ease, box-shadow 0.25s ease;
         }
 
         .status-badge.real {
           background: rgba(34, 197, 94, 0.12);
           color: #86efac;
+          box-shadow: 0 0 24px rgba(34, 197, 94, 0.22);
         }
 
         .status-badge.suspicious {
           background: rgba(245, 158, 11, 0.12);
           color: #fcd34d;
+          box-shadow: 0 0 24px rgba(245, 158, 11, 0.22);
         }
 
         .status-badge.fake {
           background: rgba(239, 68, 68, 0.12);
           color: #fca5a5;
+          box-shadow: 0 0 24px rgba(239, 68, 68, 0.22);
         }
 
         .meter {
@@ -896,9 +1013,9 @@ export default function HomePage() {
         .meter-fill {
           height: 100%;
           border-radius: 999px;
-          background: linear-gradient(90deg, #32d583, #4493ff, #7c4dff);
-          box-shadow: 0 0 20px rgba(68, 147, 255, 0.45);
-          transition: width 0.8s ease;
+          background: linear-gradient(90deg, #ef4444 0%, #f59e0b 50%, #22c55e 100%);
+          box-shadow: 0 0 20px rgba(245, 158, 11, 0.26);
+          transition: width 0.9s ease;
         }
 
         .result-section {
@@ -915,6 +1032,8 @@ export default function HomePage() {
           place-items: center;
           text-align: center;
           gap: 10px;
+          position: relative;
+          z-index: 1;
         }
 
         .empty-orb {
@@ -946,7 +1065,7 @@ export default function HomePage() {
         }
 
         .fade-in {
-          animation: fadeIn 0.5s ease;
+          animation: fadeIn 0.45s ease;
         }
 
         h1,
@@ -992,6 +1111,17 @@ export default function HomePage() {
           }
         }
 
+        @keyframes pulseText {
+          0%,
+          100% {
+            opacity: 0.65;
+          }
+
+          50% {
+            opacity: 1;
+          }
+        }
+
         @media (max-width: 1080px) {
           .content-grid {
             grid-template-columns: 1fr;
@@ -1005,6 +1135,10 @@ export default function HomePage() {
         @media (max-width: 900px) {
           .page {
             flex-direction: column;
+          }
+
+          .page-glow-left {
+            left: 40px;
           }
 
           .sidebar {

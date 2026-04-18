@@ -430,18 +430,20 @@ export default function HomePage() {
                         <button
                           className="history-item-main"
                           onClick={() => showHistoryItem(item)}
+                          type="button"
                         >
                           <span className="history-title">{formatHistoryTitle(item)}</span>
                           <small>
-                            {itemStatus} · {item.trustScore}%
+                            {itemStatus} - {item.trustScore}%
                           </small>
                         </button>
                         <button
                           className="history-delete"
-                          aria-label="Delete history item"
+                          aria-label={`Delete ${formatHistoryTitle(item)}`}
                           onClick={() => handleDeleteHistory(item.id)}
+                          type="button"
                         >
-                          🗑
+                          <span aria-hidden="true">X</span>
                         </button>
                       </div>
                     );
@@ -733,8 +735,11 @@ export default function HomePage() {
         .history-item {
           border-radius: 10px;
           display: flex;
-          align-items: flex-start;
-          gap: 6px;
+          justify-content: space-between;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          transition: background 0.25s ease;
         }
 
         .history-item:hover {
@@ -747,7 +752,7 @@ export default function HomePage() {
 
         .history-item-main {
           flex: 1;
-          width: 100%;
+          min-width: 0;
           border: 0;
           border-radius: 10px;
           background: transparent;
@@ -762,25 +767,34 @@ export default function HomePage() {
 
         .history-delete {
           opacity: 0;
+          flex-shrink: 0;
           border: 0;
           background: transparent;
           color: #8e8ea0;
           cursor: pointer;
-          font-size: 13px;
+          font-size: 20px;
           line-height: 1;
-          padding: 10px 8px;
+          min-width: 36px;
+          min-height: 36px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 8px;
           border-radius: 8px;
-          transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
+          pointer-events: none;
+          transition: opacity 0.25s ease, background 0.25s ease, color 0.25s ease;
         }
 
         .history-item:hover .history-delete,
+        .history-item:focus-within .history-delete,
         .history-item.active .history-delete {
           opacity: 1;
+          pointer-events: auto;
         }
 
         .history-delete:hover {
-          background: rgba(255, 255, 255, 0.08);
-          color: #ececf1;
+          background: rgba(255, 79, 79, 0.12);
+          color: #ff6b6b;
         }
 
         .history-title {

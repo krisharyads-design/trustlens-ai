@@ -120,6 +120,7 @@ export default function HomePage() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [loading, setLoading] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -185,6 +186,25 @@ export default function HomePage() {
     return () => URL.revokeObjectURL(objectUrl);
   }, [selectedFile]);
 
+  useEffect(() => {
+    if (cooldown <= 0) {
+      return undefined;
+    }
+
+    const timer = setInterval(() => {
+      setCooldown((current) => {
+        if (current <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+
+        return current - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [cooldown]);
+
   function handleFileSelect(file) {
     setSelectedFile(file);
     setError("");
@@ -229,7 +249,7 @@ export default function HomePage() {
   }
 
   async function handleAnalyze() {
-    if (loading) {
+    if (loading || cooldown > 0) {
       return;
     }
 
@@ -277,7 +297,19 @@ export default function HomePage() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Analysis failed.");
+        const message = data.error || "Analysis failed.";
+        const lowerMessage = message.toLowerCase();
+
+        if (
+          response.status === 429 ||
+          lowerMessage.includes("quota") ||
+          lowerMessage.includes("rate limit") ||
+          lowerMessage.includes("resource exhausted")
+        ) {
+          throw new Error("Server busy, please wait a few seconds and try again");
+        }
+
+        throw new Error(message);
       }
 
       const nextResult = {
@@ -291,6 +323,7 @@ export default function HomePage() {
       setError(err.message || "Something went wrong.");
     } finally {
       setLoading(false);
+      setCooldown(30);
     }
   }
 
@@ -302,6 +335,12 @@ export default function HomePage() {
   const activeResult = result
     ? { ...result, status: getStatusFromScore(result.trustScore) }
     : null;
+  const analyzeDisabled = loading || cooldown > 0;
+  const analyzeLabel = loading
+    ? "Analyzing..."
+    : cooldown > 0
+      ? `Wait ${cooldown}s`
+      : "Analyze Media";
 
   return (
     <>
@@ -471,15 +510,15 @@ export default function HomePage() {
               <button
                 className="analyze-button"
                 onClick={handleAnalyze}
-                disabled={loading}
+                disabled={analyzeDisabled}
               >
                 {loading ? (
                   <span className="loading-inline">
                     <span className="spinner" />
-                    <span className="loading-text">Analyzing...</span>
+                    <span className="loading-text">{analyzeLabel}</span>
                   </span>
                 ) : (
-                  "Analyze Media"
+                  analyzeLabel
                 )}
               </button>
 

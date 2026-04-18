@@ -117,6 +117,10 @@ function TrustMeter({ score = 0 }) {
   );
 }
 
+function getUserHistoryCollection(uid) {
+  return collection(db, "users", uid, "history");
+}
+
 export default function HomePage() {
   const inputRef = useRef(null);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -149,8 +153,7 @@ export default function HomePage() {
     }
 
     const historyQuery = query(
-      collection(db, "history"),
-      where("uid", "==", user.uid),
+      getUserHistoryCollection(user.uid),
       orderBy("createdAt", "desc")
     );
 
@@ -235,8 +238,7 @@ export default function HomePage() {
       return;
     }
 
-    const docRef = await addDoc(collection(db, "history"), {
-      uid: user.uid,
+    const docRef = await addDoc(getUserHistoryCollection(user.uid), {
       userName: user.displayName || "",
       fileName: fileName || "",
       status: savedResult.status,
@@ -258,7 +260,11 @@ export default function HomePage() {
         setResult(null);
       }
 
-      await deleteDoc(doc(db, "history", itemId));
+      if (!user) {
+        return;
+      }
+
+      await deleteDoc(doc(db, "users", user.uid, "history", itemId));
     } catch (err) {
       setError(err.message || "Could not delete history item.");
     }

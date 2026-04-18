@@ -126,6 +126,7 @@ export default function HomePage() {
   const [user, setUser] = useState(null);
   const [history, setHistory] = useState([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -304,71 +305,87 @@ export default function HomePage() {
         <div className="page-glow page-glow-left" />
         <div className="page-glow page-glow-right" />
 
-        <aside className="sidebar">
-          <div className="brand">
-            <div className="brand-mark">TL</div>
-            <div>
-              <p className="kicker">TrustLens AI</p>
-              <h2>Media Verifier</h2>
-            </div>
-          </div>
+        <aside className={`sidebar-wrap ${sidebarOpen ? "open" : "closed"}`}>
+          <button
+            className="sidebar-toggle"
+            onClick={() => setSidebarOpen((value) => !value)}
+            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            {sidebarOpen ? "<" : ">"}
+          </button>
 
-          {!user ? (
-            <button className="primary-sidebar-button" onClick={handleGoogleLogin}>
-              Login with Google
-            </button>
-          ) : (
-            <div className="profile-card glass-card">
-              <img
-                className="avatar"
-                src={user.photoURL || "https://placehold.co/80x80/png"}
-                alt={user.displayName || "User avatar"}
-              />
-              <div>
-                <p className="kicker">Signed in as</p>
-                <p className="profile-name">{user.displayName}</p>
-              </div>
-              <button className="ghost-button" onClick={handleLogout}>
-                Logout
-              </button>
-            </div>
-          )}
-
-          <div className="history-panel glass-card">
-            <div className="panel-head">
-              <p className="kicker">History</p>
-              <span>{history.length}</span>
-            </div>
-
-            {user ? (
-              history.length > 0 ? (
-                <div className="history-list">
-                  {history.map((item) => {
-                    const itemStatus = getStatusFromScore(item.trustScore);
-
-                    return (
-                      <button
-                        key={item.id}
-                        className={`history-item ${
-                          selectedHistoryId === item.id ? "active" : ""
-                        }`}
-                        onClick={() => showHistoryItem(item)}
-                      >
-                        <span className="history-title">{formatHistoryTitle(item)}</span>
-                        <div className="history-meta">
-                          <small>{itemStatus}</small>
-                          <small>{item.trustScore}%</small>
-                        </div>
-                      </button>
-                    );
-                  })}
+          <div className={`sidebar ${sidebarOpen ? "open" : "closed"}`}>
+            <div className="brand">
+              <div className="brand-mark">TL</div>
+              {sidebarOpen ? (
+                <div>
+                  <p className="kicker">TrustLens AI</p>
+                  <h2>Media Verifier</h2>
                 </div>
+              ) : null}
+            </div>
+
+            {sidebarOpen ? (
+              !user ? (
+                <button className="primary-sidebar-button" onClick={handleGoogleLogin}>
+                  Login with Google
+                </button>
               ) : (
-                <p className="muted">No history yet. Analyze a file to save results.</p>
+                <div className="profile-card glass-card">
+                  <img
+                    className="avatar"
+                    src={user.photoURL || "https://placehold.co/80x80/png"}
+                    alt={user.displayName || "User avatar"}
+                  />
+                  <div>
+                    <p className="kicker">Signed in as</p>
+                    <p className="profile-name">{user.displayName}</p>
+                  </div>
+                  <button className="ghost-button" onClick={handleLogout}>
+                    Logout
+                  </button>
+                </div>
               )
-            ) : (
-              <p className="muted">Login to save results and see your history.</p>
-            )}
+            ) : null}
+
+            {sidebarOpen ? (
+              <div className="history-panel glass-card">
+                <div className="panel-head">
+                  <p className="kicker">History</p>
+                  <span>{history.length}</span>
+                </div>
+
+                {user ? (
+                  history.length > 0 ? (
+                    <div className="history-list">
+                      {history.map((item) => {
+                        const itemStatus = getStatusFromScore(item.trustScore);
+
+                        return (
+                          <button
+                            key={item.id}
+                            className={`history-item ${
+                              selectedHistoryId === item.id ? "active" : ""
+                            }`}
+                            onClick={() => showHistoryItem(item)}
+                          >
+                            <span className="history-title">{formatHistoryTitle(item)}</span>
+                            <div className="history-meta">
+                              <small>{itemStatus}</small>
+                              <small>{item.trustScore}%</small>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="muted">No history yet. Analyze a file to save results.</p>
+                  )
+                ) : (
+                  <p className="muted">Login to save results and see your history.</p>
+                )}
+              </div>
+            ) : null}
           </div>
         </aside>
 
@@ -413,7 +430,9 @@ export default function HomePage() {
 
                 {previewUrl ? (
                   <div className="preview-shell">
-                    <img className="preview-image" src={previewUrl} alt="Preview" />
+                    <div className="preview-frame">
+                      <img className="preview-image" src={previewUrl} alt="Preview" />
+                    </div>
                   </div>
                 ) : (
                   <div className="upload-placeholder">
@@ -570,30 +589,83 @@ export default function HomePage() {
           box-shadow: 0 22px 70px rgba(0, 0, 0, 0.32);
         }
 
-        .sidebar {
-          width: 310px;
-          padding: 24px 18px;
+        .sidebar-wrap {
           position: sticky;
           top: 0;
-          z-index: 1;
+          z-index: 2;
           height: 100vh;
+          margin: 18px 0 18px 18px;
+          transition: width 0.3s ease;
+        }
+
+        .sidebar-wrap.open {
+          width: 328px;
+        }
+
+        .sidebar-wrap.closed {
+          width: 88px;
+        }
+
+        .sidebar {
+          height: calc(100vh - 36px);
+          border-radius: 28px;
+          padding: 24px 18px;
           backdrop-filter: blur(20px);
-          background: rgba(8, 12, 22, 0.55);
-          border-right: 1px solid rgba(255, 255, 255, 0.08);
+          background: rgba(8, 12, 22, 0.58);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          box-shadow: 0 18px 55px rgba(0, 0, 0, 0.28);
           display: flex;
           flex-direction: column;
           gap: 20px;
+          overflow: hidden;
+          transition:
+            width 0.3s ease,
+            padding 0.3s ease,
+            box-shadow 0.3s ease;
+        }
+
+        .sidebar.open {
+          width: 310px;
+        }
+
+        .sidebar.closed {
+          width: 70px;
+          padding: 24px 12px;
+          align-items: center;
+        }
+
+        .sidebar-toggle {
+          position: absolute;
+          top: 18px;
+          right: -14px;
+          width: 34px;
+          height: 34px;
+          border-radius: 999px;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          background: rgba(15, 20, 35, 0.95);
+          color: #fff;
+          cursor: pointer;
+          z-index: 3;
+          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.28);
+          transition: transform 0.2s ease, background 0.2s ease;
+        }
+
+        .sidebar-toggle:hover {
+          transform: scale(1.06);
+          background: rgba(30, 38, 64, 0.95);
         }
 
         .brand {
           display: flex;
           align-items: center;
           gap: 14px;
+          width: 100%;
         }
 
         .brand-mark {
           width: 44px;
           height: 44px;
+          min-width: 44px;
           border-radius: 14px;
           display: grid;
           place-items: center;
@@ -611,7 +683,7 @@ export default function HomePage() {
         }
 
         .profile-card {
-          padding: 16px;
+          padding: 18px;
           display: flex;
           flex-direction: column;
           gap: 14px;
@@ -632,7 +704,7 @@ export default function HomePage() {
 
         .history-panel {
           flex: 1;
-          padding: 16px;
+          padding: 18px;
           overflow: hidden;
           display: flex;
           flex-direction: column;
@@ -704,10 +776,11 @@ export default function HomePage() {
         .main {
           flex: 1;
           z-index: 1;
-          padding: 28px;
+          padding: 28px 28px 28px 24px;
           display: flex;
           flex-direction: column;
           gap: 24px;
+          min-width: 0;
         }
 
         .hero-card,
@@ -812,12 +885,25 @@ export default function HomePage() {
           box-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
         }
 
-        .preview-image {
+        .preview-frame {
           width: 100%;
           height: 240px;
-          object-fit: cover;
+          padding: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
           border-radius: 18px;
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          background: rgba(3, 7, 16, 0.7);
+        }
+
+        .preview-image {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          object-position: center;
+          display: block;
+          border-radius: 14px;
           transition: transform 0.35s ease, filter 0.35s ease;
         }
 
@@ -1141,12 +1227,27 @@ export default function HomePage() {
             left: 40px;
           }
 
-          .sidebar {
+          .sidebar-wrap {
             position: static;
+            width: auto !important;
+            height: auto;
+            margin: 18px 18px 0;
+          }
+
+          .sidebar,
+          .sidebar.open,
+          .sidebar.closed {
             width: 100%;
             height: auto;
-            border-right: 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            align-items: stretch;
+          }
+
+          .sidebar.closed {
+            padding: 24px 18px;
+          }
+
+          .sidebar-toggle {
+            right: 12px;
           }
 
           .main {

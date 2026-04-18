@@ -5,6 +5,8 @@ import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import {
   addDoc,
   collection,
+  deleteDoc,
+  doc,
   onSnapshot,
   orderBy,
   query,
@@ -105,7 +107,7 @@ function TrustMeter({ score = 0 }) {
   return (
     <div className="trust-meter">
       <div className="trust-meter-head">
-        <span>Trust Score</span>
+        <span className="trust-meter-label">Trust Score</span>
         <strong>{safeScore}%</strong>
       </div>
       <div className="trust-meter-track">
@@ -247,6 +249,21 @@ export default function HomePage() {
     setSelectedHistoryId(docRef.id);
   }
 
+  async function handleDeleteHistory(itemId) {
+    try {
+      setHistory((current) => current.filter((item) => item.id !== itemId));
+
+      if (selectedHistoryId === itemId) {
+        setSelectedHistoryId("");
+        setResult(null);
+      }
+
+      await deleteDoc(doc(db, "history", itemId));
+    } catch (err) {
+      setError(err.message || "Could not delete history item.");
+    }
+  }
+
   async function handleAnalyze() {
     if (loading || cooldown > 0) {
       return;
@@ -366,18 +383,29 @@ export default function HomePage() {
                     const itemStatus = getStatusFromScore(item.trustScore);
 
                     return (
-                      <button
+                      <div
                         key={item.id}
                         className={`history-item ${
                           selectedHistoryId === item.id ? "active" : ""
                         }`}
-                        onClick={() => showHistoryItem(item)}
                       >
-                        <span className="history-title">{formatHistoryTitle(item)}</span>
-                        <small>
-                          {itemStatus} · {item.trustScore}%
-                        </small>
-                      </button>
+                        <button
+                          className="history-item-main"
+                          onClick={() => showHistoryItem(item)}
+                        >
+                          <span className="history-title">{formatHistoryTitle(item)}</span>
+                          <small>
+                            {itemStatus} · {item.trustScore}%
+                          </small>
+                        </button>
+                        <button
+                          className="history-delete"
+                          aria-label="Delete history item"
+                          onClick={() => handleDeleteHistory(item.id)}
+                        >
+                          🗑
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -655,6 +683,22 @@ export default function HomePage() {
         }
 
         .history-item {
+          border-radius: 10px;
+          display: flex;
+          align-items: flex-start;
+          gap: 6px;
+        }
+
+        .history-item:hover {
+          background: rgba(255, 255, 255, 0.06);
+        }
+
+        .history-item.active {
+          background: rgba(255, 255, 255, 0.1);
+        }
+
+        .history-item-main {
+          flex: 1;
           width: 100%;
           border: 0;
           border-radius: 10px;
@@ -668,12 +712,27 @@ export default function HomePage() {
           gap: 4px;
         }
 
-        .history-item:hover {
-          background: rgba(255, 255, 255, 0.06);
+        .history-delete {
+          opacity: 0;
+          border: 0;
+          background: transparent;
+          color: #8e8ea0;
+          cursor: pointer;
+          font-size: 13px;
+          line-height: 1;
+          padding: 10px 8px;
+          border-radius: 8px;
+          transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
         }
 
-        .history-item.active {
-          background: rgba(255, 255, 255, 0.1);
+        .history-item:hover .history-delete,
+        .history-item.active .history-delete {
+          opacity: 1;
+        }
+
+        .history-delete:hover {
+          background: rgba(255, 255, 255, 0.08);
+          color: #ececf1;
         }
 
         .history-title {
@@ -973,6 +1032,10 @@ export default function HomePage() {
           justify-content: space-between;
           gap: 12px;
           font-size: 14px;
+        }
+
+        .trust-meter-label {
+          margin-right: 8px;
         }
 
         .trust-meter-track {

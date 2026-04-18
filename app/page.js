@@ -127,7 +127,6 @@ export default function HomePage() {
   const [user, setUser] = useState(null);
   const [history, setHistory] = useState([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState("");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -346,88 +345,77 @@ export default function HomePage() {
   return (
     <>
       <main className="page">
-        <aside className={`sidebar ${sidebarOpen ? "open" : "closed"}`}>
+        <div className="page-glow glow-left" />
+        <div className="page-glow glow-right" />
+
+        <aside className="sidebar">
           <div className="sidebar-top">
             <div className="brand">
               <div className="brand-mark">TL</div>
-              {sidebarOpen ? <span className="brand-name">TrustLens AI</span> : null}
+              <span className="brand-name">TrustLens AI</span>
             </div>
-
-            <button
-              className="sidebar-toggle"
-              onClick={() => setSidebarOpen((value) => !value)}
-              aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-            >
-              {sidebarOpen ? "<" : ">"}
-            </button>
           </div>
 
-          {sidebarOpen ? (
-            <>
-              <div className="sidebar-history">
-                <p className="sidebar-label">History</p>
+          <div className="sidebar-middle">
+            <p className="sidebar-label">History</p>
 
-                {user ? (
-                  history.length > 0 ? (
-                    <div className="history-list">
-                      {history.map((item) => {
-                        const itemStatus = getStatusFromScore(item.trustScore);
+            {user ? (
+              history.length > 0 ? (
+                <div className="history-list">
+                  {history.map((item) => {
+                    const itemStatus = getStatusFromScore(item.trustScore);
 
-                        return (
-                          <button
-                            key={item.id}
-                            className={`history-item ${
-                              selectedHistoryId === item.id ? "active" : ""
-                            }`}
-                            onClick={() => showHistoryItem(item)}
-                          >
-                            <span className="history-title">{formatHistoryTitle(item)}</span>
-                            <small>
-                              {itemStatus} · {item.trustScore}%
-                            </small>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="sidebar-text">No history yet.</p>
-                  )
-                ) : (
-                  <p className="sidebar-text">Login to save and view your history.</p>
-                )}
-              </div>
+                    return (
+                      <button
+                        key={item.id}
+                        className={`history-item ${
+                          selectedHistoryId === item.id ? "active" : ""
+                        }`}
+                        onClick={() => showHistoryItem(item)}
+                      >
+                        <span className="history-title">{formatHistoryTitle(item)}</span>
+                        <small>
+                          {itemStatus} · {item.trustScore}%
+                        </small>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="sidebar-text">No history yet.</p>
+              )
+            ) : (
+              <p className="sidebar-text">Login to save and view your history.</p>
+            )}
+          </div>
 
-              <div className="sidebar-bottom">
-                {!user ? (
-                  <button className="primary-button" onClick={handleGoogleLogin}>
-                    Login with Google
-                  </button>
-                ) : (
-                  <div className="user-row">
-                    <div className="user-info">
-                      <img
-                        className="avatar"
-                        src={user.photoURL || "https://placehold.co/80x80/png"}
-                        alt={user.displayName || "User avatar"}
-                      />
-                      <div>
-                        <p className="user-name">{user.displayName}</p>
-                        <p className="user-subtitle">Signed in</p>
-                      </div>
-                    </div>
-                    <button className="ghost-button small" onClick={handleLogout}>
-                      Logout
-                    </button>
+          <div className="sidebar-bottom">
+            {!user ? (
+              <button className="primary-button" onClick={handleGoogleLogin}>
+                Login with Google
+              </button>
+            ) : (
+              <div className="user-row">
+                <div className="user-info">
+                  <img
+                    className="avatar"
+                    src={user.photoURL || "https://placehold.co/80x80/png"}
+                    alt={user.displayName || "User avatar"}
+                  />
+                  <div>
+                    <p className="user-name">{user.displayName}</p>
+                    <p className="user-subtitle">Signed in</p>
                   </div>
-                )}
+                </div>
+                <button className="ghost-button small" onClick={handleLogout}>
+                  Logout
+                </button>
               </div>
-            </>
-          ) : (
-            <div className="sidebar-collapsed-mark" />
-          )}
+            )}
+          </div>
         </aside>
 
-        <section className={`main ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
+        <section className="main">
           <div className="header">
             <p className="eyebrow">AI-powered trust checking</p>
             <h1>Analyze images and videos</h1>
@@ -437,7 +425,7 @@ export default function HomePage() {
           </div>
 
           <div className="content-grid">
-            <div className="panel">
+            <div className="panel glass-card">
               <div
                 className={`upload-box ${isDragging ? "dragging" : ""}`}
                 onDragOver={(event) => {
@@ -516,7 +504,7 @@ export default function HomePage() {
               {error ? <p className="error">{error}</p> : null}
             </div>
 
-            <div className="panel result-panel">
+            <div className="panel glass-card result-panel">
               {loading ? (
                 <div className="loading-state">
                   <span className="spinner large" />
@@ -569,8 +557,35 @@ export default function HomePage() {
       <style jsx>{`
         .page {
           min-height: 100vh;
-          background: #202123;
+          background:
+            radial-gradient(circle at 30% 20%, rgba(79, 70, 229, 0.18), transparent 28%),
+            radial-gradient(circle at 75% 35%, rgba(168, 85, 247, 0.14), transparent 24%),
+            linear-gradient(135deg, #081120 0%, #151230 45%, #050608 100%);
           color: #ececf1;
+        }
+
+        .page-glow {
+          position: fixed;
+          border-radius: 999px;
+          filter: blur(90px);
+          pointer-events: none;
+          opacity: 0.45;
+        }
+
+        .glow-left {
+          top: 110px;
+          left: 340px;
+          width: 260px;
+          height: 260px;
+          background: rgba(59, 130, 246, 0.18);
+        }
+
+        .glow-right {
+          right: 120px;
+          top: 180px;
+          width: 300px;
+          height: 300px;
+          background: rgba(168, 85, 247, 0.14);
         }
 
         .sidebar {
@@ -578,42 +593,30 @@ export default function HomePage() {
           top: 0;
           left: 0;
           bottom: 0;
-          background: #171717;
-          border-right: 1px solid #2a2b32;
+          width: 260px;
+          padding: 14px 12px;
+          background: rgba(12, 14, 20, 0.75);
+          backdrop-filter: blur(18px);
           display: flex;
           flex-direction: column;
-          transition: width 0.25s ease;
-          overflow: hidden;
-        }
-
-        .sidebar.open {
-          width: 260px;
-        }
-
-        .sidebar.closed {
-          width: 20px;
+          z-index: 10;
         }
 
         .sidebar-top {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 14px 12px;
-          min-height: 56px;
+          padding: 6px 6px 14px;
         }
 
         .brand {
           display: flex;
           align-items: center;
           gap: 10px;
-          min-width: 0;
         }
 
         .brand-mark {
           width: 28px;
           height: 28px;
           border-radius: 8px;
-          background: #2f6fed;
+          background: linear-gradient(135deg, #3b82f6, #8b5cf6);
           color: white;
           display: grid;
           place-items: center;
@@ -624,34 +627,19 @@ export default function HomePage() {
         .brand-name {
           font-size: 14px;
           font-weight: 600;
-          white-space: nowrap;
+          letter-spacing: 0.01em;
         }
 
-        .sidebar-toggle {
-          width: 28px;
-          height: 28px;
-          border: 0;
-          border-radius: 8px;
-          background: transparent;
-          color: #b4b7c5;
-          cursor: pointer;
-        }
-
-        .sidebar-toggle:hover {
-          background: #2a2b32;
-          color: #ececf1;
-        }
-
-        .sidebar-history {
+        .sidebar-middle {
           flex: 1;
-          padding: 8px 10px 12px;
           overflow: hidden;
           display: flex;
           flex-direction: column;
         }
 
         .sidebar-label {
-          margin: 0 6px 10px;
+          margin: 0;
+          padding: 8px 10px;
           font-size: 11px;
           text-transform: uppercase;
           letter-spacing: 0.08em;
@@ -663,6 +651,7 @@ export default function HomePage() {
           flex-direction: column;
           gap: 2px;
           overflow-y: auto;
+          padding: 0 4px;
         }
 
         .history-item {
@@ -680,11 +669,11 @@ export default function HomePage() {
         }
 
         .history-item:hover {
-          background: #2a2b32;
+          background: rgba(255, 255, 255, 0.06);
         }
 
         .history-item.active {
-          background: #343541;
+          background: rgba(255, 255, 255, 0.1);
         }
 
         .history-title {
@@ -694,20 +683,22 @@ export default function HomePage() {
           text-overflow: ellipsis;
         }
 
-        .history-item small {
-          color: #8e8ea0;
+        .history-item small,
+        .sidebar-text,
+        .user-subtitle,
+        .subtext,
+        .eyebrow {
+          color: #a1a1b3;
         }
 
         .sidebar-text {
-          padding: 0 6px;
-          color: #8e8ea0;
+          padding: 0 10px;
           font-size: 14px;
           line-height: 1.5;
         }
 
         .sidebar-bottom {
-          border-top: 1px solid #2a2b32;
-          padding: 12px 10px;
+          padding: 12px 6px 4px;
         }
 
         .user-row {
@@ -738,61 +729,54 @@ export default function HomePage() {
         .user-subtitle {
           margin: 2px 0 0;
           font-size: 12px;
-          color: #8e8ea0;
-        }
-
-        .sidebar-collapsed-mark {
-          flex: 1;
         }
 
         .main {
           min-height: 100vh;
-          transition: margin-left 0.25s ease;
-        }
-
-        .main.sidebar-open {
           margin-left: 260px;
-        }
-
-        .main.sidebar-closed {
-          margin-left: 20px;
+          position: relative;
+          z-index: 1;
         }
 
         .header {
-          max-width: 960px;
-          padding: 32px 32px 20px;
+          max-width: 1040px;
+          padding: 36px 36px 22px;
         }
 
         .content-grid {
-          max-width: 960px;
-          padding: 0 32px 32px;
+          max-width: 1040px;
+          padding: 0 36px 36px;
           display: grid;
           grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
           gap: 24px;
           align-items: start;
         }
 
+        .glass-card {
+          background: rgba(255, 255, 255, 0.06);
+          backdrop-filter: blur(18px);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
         .panel {
-          background: #202123;
-          border: 1px solid #2a2b32;
-          border-radius: 16px;
+          border-radius: 18px;
           padding: 20px;
         }
 
         .upload-box {
           min-height: 340px;
-          border: 1px dashed #3a3b44;
+          border: 1px dashed rgba(255, 255, 255, 0.16);
           border-radius: 14px;
           padding: 16px;
           display: flex;
           flex-direction: column;
           justify-content: space-between;
-          background: #171717;
+          background: rgba(10, 11, 16, 0.45);
         }
 
         .upload-box.dragging {
-          border-color: #5b8cff;
-          background: #1b1d22;
+          border-color: rgba(96, 165, 250, 0.7);
+          background: rgba(15, 18, 28, 0.6);
         }
 
         .hidden-input {
@@ -812,7 +796,7 @@ export default function HomePage() {
           width: 44px;
           height: 44px;
           border-radius: 12px;
-          background: #2a2b32;
+          background: rgba(255, 255, 255, 0.08);
           display: grid;
           place-items: center;
           color: #ececf1;
@@ -827,7 +811,7 @@ export default function HomePage() {
         .preview-shell {
           overflow: hidden;
           border-radius: 12px;
-          background: #111214;
+          background: rgba(8, 9, 14, 0.7);
         }
 
         .preview-frame {
@@ -868,17 +852,18 @@ export default function HomePage() {
           border-radius: 10px;
           font-size: 14px;
           cursor: pointer;
+          transition: background 0.2s ease, border-color 0.2s ease;
         }
 
         .primary-button {
           border: 0;
-          background: #2f6fed;
+          background: linear-gradient(135deg, #3b82f6, #7c3aed);
           color: white;
           padding: 12px 16px;
         }
 
         .primary-button:hover {
-          background: #2563eb;
+          filter: brightness(1.05);
         }
 
         .primary-button:disabled {
@@ -887,14 +872,14 @@ export default function HomePage() {
         }
 
         .ghost-button {
-          border: 1px solid #3a3b44;
+          border: 1px solid rgba(255, 255, 255, 0.14);
           background: transparent;
           color: #ececf1;
           padding: 10px 14px;
         }
 
         .ghost-button:hover {
-          background: #2a2b32;
+          background: rgba(255, 255, 255, 0.06);
         }
 
         .ghost-button.small {
@@ -995,7 +980,7 @@ export default function HomePage() {
           height: 6px;
           border-radius: 999px;
           overflow: hidden;
-          background: #2a2b32;
+          background: rgba(255, 255, 255, 0.08);
         }
 
         .trust-meter-fill {
@@ -1010,7 +995,7 @@ export default function HomePage() {
           flex-direction: column;
           gap: 8px;
           padding-top: 16px;
-          border-top: 1px solid #2a2b32;
+          border-top: 1px solid rgba(255, 255, 255, 0.08);
         }
 
         .empty-state {
@@ -1026,12 +1011,10 @@ export default function HomePage() {
           font-size: 11px;
           text-transform: uppercase;
           letter-spacing: 0.08em;
-          color: #8e8ea0;
         }
 
         .subtext {
           margin: 0;
-          color: #b4b7c5;
           line-height: 1.6;
         }
 
@@ -1073,19 +1056,11 @@ export default function HomePage() {
         @media (max-width: 900px) {
           .sidebar {
             position: static;
-            width: 100% !important;
-            border-right: 0;
-            border-bottom: 1px solid #2a2b32;
+            width: 100%;
+            min-height: auto;
           }
 
-          .sidebar.closed .sidebar-inner {
-            opacity: 1;
-            pointer-events: auto;
-          }
-
-          .main,
-          .main.sidebar-open,
-          .main.sidebar-closed {
+          .main {
             margin-left: 0;
           }
         }

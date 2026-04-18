@@ -305,91 +305,93 @@ export default function HomePage() {
         <div className="page-glow page-glow-left" />
         <div className="page-glow page-glow-right" />
 
-        <aside className={`sidebar-wrap ${sidebarOpen ? "open" : "closed"}`}>
-          <button
-            className="sidebar-toggle"
-            onClick={() => setSidebarOpen((value) => !value)}
-            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-          >
-            {sidebarOpen ? "<" : ">"}
-          </button>
-
+        <aside className={`sidebar-shell ${sidebarOpen ? "open" : "closed"}`}>
           <div className={`sidebar ${sidebarOpen ? "open" : "closed"}`}>
-            <div className="brand">
-              <div className="brand-mark">TL</div>
+            <button
+              className="sidebar-toggle"
+              onClick={() => setSidebarOpen((value) => !value)}
+              aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            >
+              {sidebarOpen ? "<" : ">"}
+            </button>
+
+            <div className="sidebar-inner">
+              <div className="brand">
+                <div className="brand-mark">TL</div>
+                {sidebarOpen ? (
+                  <div>
+                    <p className="kicker">TrustLens AI</p>
+                    <h2>Media Verifier</h2>
+                  </div>
+                ) : null}
+              </div>
+
               {sidebarOpen ? (
-                <div>
-                  <p className="kicker">TrustLens AI</p>
-                  <h2>Media Verifier</h2>
+                !user ? (
+                  <button className="primary-sidebar-button" onClick={handleGoogleLogin}>
+                    Login with Google
+                  </button>
+                ) : (
+                  <div className="profile-card glass-card">
+                    <img
+                      className="avatar"
+                      src={user.photoURL || "https://placehold.co/80x80/png"}
+                      alt={user.displayName || "User avatar"}
+                    />
+                    <div>
+                      <p className="kicker">Signed in as</p>
+                      <p className="profile-name">{user.displayName}</p>
+                    </div>
+                    <button className="ghost-button" onClick={handleLogout}>
+                      Logout
+                    </button>
+                  </div>
+                )
+              ) : null}
+
+              {sidebarOpen ? (
+                <div className="history-panel glass-card">
+                  <div className="panel-head">
+                    <p className="kicker">History</p>
+                    <span>{history.length}</span>
+                  </div>
+
+                  {user ? (
+                    history.length > 0 ? (
+                      <div className="history-list">
+                        {history.map((item) => {
+                          const itemStatus = getStatusFromScore(item.trustScore);
+
+                          return (
+                            <button
+                              key={item.id}
+                              className={`history-item ${
+                                selectedHistoryId === item.id ? "active" : ""
+                              }`}
+                              onClick={() => showHistoryItem(item)}
+                            >
+                              <span className="history-title">{formatHistoryTitle(item)}</span>
+                              <div className="history-meta">
+                                <small>{itemStatus}</small>
+                                <small>{item.trustScore}%</small>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="muted">No history yet. Analyze a file to save results.</p>
+                    )
+                  ) : (
+                    <p className="muted">Login to save results and see your history.</p>
+                  )}
                 </div>
               ) : null}
             </div>
-
-            {sidebarOpen ? (
-              !user ? (
-                <button className="primary-sidebar-button" onClick={handleGoogleLogin}>
-                  Login with Google
-                </button>
-              ) : (
-                <div className="profile-card glass-card">
-                  <img
-                    className="avatar"
-                    src={user.photoURL || "https://placehold.co/80x80/png"}
-                    alt={user.displayName || "User avatar"}
-                  />
-                  <div>
-                    <p className="kicker">Signed in as</p>
-                    <p className="profile-name">{user.displayName}</p>
-                  </div>
-                  <button className="ghost-button" onClick={handleLogout}>
-                    Logout
-                  </button>
-                </div>
-              )
-            ) : null}
-
-            {sidebarOpen ? (
-              <div className="history-panel glass-card">
-                <div className="panel-head">
-                  <p className="kicker">History</p>
-                  <span>{history.length}</span>
-                </div>
-
-                {user ? (
-                  history.length > 0 ? (
-                    <div className="history-list">
-                      {history.map((item) => {
-                        const itemStatus = getStatusFromScore(item.trustScore);
-
-                        return (
-                          <button
-                            key={item.id}
-                            className={`history-item ${
-                              selectedHistoryId === item.id ? "active" : ""
-                            }`}
-                            onClick={() => showHistoryItem(item)}
-                          >
-                            <span className="history-title">{formatHistoryTitle(item)}</span>
-                            <div className="history-meta">
-                              <small>{itemStatus}</small>
-                              <small>{item.trustScore}%</small>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="muted">No history yet. Analyze a file to save results.</p>
-                  )
-                ) : (
-                  <p className="muted">Login to save results and see your history.</p>
-                )}
-              </div>
-            ) : null}
           </div>
         </aside>
 
-        <section className="main">
+        <section className={`main ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
           <div className="hero-card glass-card fade-in">
             <p className="kicker">AI-powered trust checking</p>
             <h1>Analyze images and videos with a polished, simple workflow.</h1>
@@ -538,7 +540,6 @@ export default function HomePage() {
       <style jsx>{`
         .page {
           min-height: 100vh;
-          display: flex;
           position: relative;
           overflow: hidden;
           background:
@@ -589,65 +590,87 @@ export default function HomePage() {
           box-shadow: 0 22px 70px rgba(0, 0, 0, 0.32);
         }
 
-        .sidebar-wrap {
-          position: sticky;
-          top: 0;
-          z-index: 2;
-          height: 100vh;
-          margin: 18px 0 18px 18px;
-          transition: width 0.3s ease;
+        .sidebar-shell {
+          position: fixed;
+          top: 18px;
+          left: 18px;
+          bottom: 18px;
+          z-index: 20;
+          transition: width 0.32s ease, transform 0.32s ease;
         }
 
-        .sidebar-wrap.open {
-          width: 328px;
+        .sidebar-shell.open {
+          width: 278px;
         }
 
-        .sidebar-wrap.closed {
-          width: 88px;
+        .sidebar-shell.closed {
+          width: 28px;
         }
 
         .sidebar {
-          height: calc(100vh - 36px);
-          border-radius: 28px;
-          padding: 24px 18px;
+          position: relative;
+          height: 100%;
+          border-radius: 26px;
           backdrop-filter: blur(20px);
-          background: rgba(8, 12, 22, 0.58);
+          background: rgba(8, 12, 22, 0.72);
           border: 1px solid rgba(255, 255, 255, 0.08);
           box-shadow: 0 18px 55px rgba(0, 0, 0, 0.28);
-          display: flex;
-          flex-direction: column;
-          gap: 20px;
           overflow: hidden;
           transition:
-            width 0.3s ease,
-            padding 0.3s ease,
-            box-shadow 0.3s ease;
+            width 0.32s ease,
+            transform 0.32s ease,
+            box-shadow 0.32s ease;
         }
 
         .sidebar.open {
-          width: 310px;
+          width: 260px;
+          transform: translateX(0);
         }
 
         .sidebar.closed {
-          width: 70px;
-          padding: 24px 12px;
-          align-items: center;
+          width: 20px;
+          transform: translateX(0);
+        }
+
+        .sidebar-inner {
+          height: 100%;
+          padding: 24px 18px;
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+          opacity: 1;
+          transition: opacity 0.18s ease;
+        }
+
+        .sidebar.closed .sidebar-inner {
+          opacity: 0;
+          pointer-events: none;
         }
 
         .sidebar-toggle {
           position: absolute;
-          top: 18px;
-          right: -14px;
-          width: 34px;
-          height: 34px;
+          top: 16px;
+          right: 8px;
+          width: 28px;
+          height: 28px;
           border-radius: 999px;
           border: 1px solid rgba(255, 255, 255, 0.14);
-          background: rgba(15, 20, 35, 0.95);
+          background: rgba(18, 24, 40, 0.95);
           color: #fff;
           cursor: pointer;
-          z-index: 3;
+          z-index: 4;
+          display: grid;
+          place-items: center;
           box-shadow: 0 10px 25px rgba(0, 0, 0, 0.28);
-          transition: transform 0.2s ease, background 0.2s ease;
+          transition: transform 0.2s ease, background 0.2s ease, right 0.32s ease;
+        }
+
+        .sidebar.open .sidebar-toggle {
+          right: 10px;
+        }
+
+        .sidebar.closed .sidebar-toggle {
+          right: -4px;
         }
 
         .sidebar-toggle:hover {
@@ -774,13 +797,22 @@ export default function HomePage() {
         }
 
         .main {
-          flex: 1;
+          min-height: 100vh;
           z-index: 1;
-          padding: 28px 28px 28px 24px;
           display: flex;
           flex-direction: column;
           gap: 24px;
-          min-width: 0;
+          transition: margin-left 0.32s ease, padding 0.32s ease;
+        }
+
+        .main.sidebar-open {
+          margin-left: 296px;
+          padding: 28px 28px 28px 12px;
+        }
+
+        .main.sidebar-closed {
+          margin-left: 46px;
+          padding: 28px 28px 28px 18px;
         }
 
         .hero-card,
@@ -1219,15 +1251,7 @@ export default function HomePage() {
         }
 
         @media (max-width: 900px) {
-          .page {
-            flex-direction: column;
-          }
-
-          .page-glow-left {
-            left: 40px;
-          }
-
-          .sidebar-wrap {
+          .sidebar-shell {
             position: static;
             width: auto !important;
             height: auto;
@@ -1239,18 +1263,25 @@ export default function HomePage() {
           .sidebar.closed {
             width: 100%;
             height: auto;
-            align-items: stretch;
           }
 
           .sidebar.closed {
-            padding: 24px 18px;
+            width: 100%;
           }
 
-          .sidebar-toggle {
-            right: 12px;
+          .sidebar.closed .sidebar-inner {
+            opacity: 1;
+            pointer-events: auto;
           }
 
-          .main {
+          .sidebar.closed .sidebar-toggle {
+            right: 10px;
+          }
+
+          .main,
+          .main.sidebar-open,
+          .main.sidebar-closed {
+            margin-left: 0;
             padding: 20px;
           }
         }

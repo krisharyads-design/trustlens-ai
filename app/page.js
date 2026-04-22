@@ -15,7 +15,7 @@ import {
 } from "firebase/firestore";
 import { auth, authPersistenceReady, db, provider } from "./firebase";
 
-const ACCEPTED_TYPES = "image/*,video/*";
+const ACCEPTED_TYPES = "image/*,video/mp4,video/webm";
 const ANALYZE_COOLDOWN_SECONDS = 15;
 const RETRY_DELAY_MS = 2000;
 const MAX_IMAGE_WIDTH = 600;
@@ -182,13 +182,18 @@ async function captureVideoThumbnail(file, time = 0.5) {
     video.crossOrigin = "anonymous";
 
     await waitForEvent(video, "loadedmetadata");
+    await waitForEvent(video, "loadeddata");
 
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 360;
 
     const safeTime = Math.min(Math.max(time, 0), Math.max((video.duration || 1) - 0.1, 0));
-    video.currentTime = safeTime;
-    await waitForEvent(video, "seeked");
+
+    if (safeTime > 0) {
+      video.currentTime = safeTime;
+      await waitForEvent(video, "seeked");
+    }
+
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
     return canvas.toDataURL("image/jpeg", 0.82);
@@ -372,6 +377,32 @@ function isInvalidStoredMedia(value, mediaType = "image") {
   return estimateDataUrlBytes(value) > MAX_STORED_IMAGE_BYTES;
 }
 
+async function validateVideoFile(file) {
+  if (!file) {
+    return null;
+  }
+
+  if (!["video/mp4", "video/webm"].includes(file.type)) {
+    throw new Error("Only MP4 and WebM videos are supported.");
+  }
+
+  if (file.size > MAX_VIDEO_FILE_BYTES) {
+    throw new Error("Video is too large. Choose a clip under 2 MB.");
+  }
+
+  const metadata = await loadVideoMetadata(file).catch(() => null);
+
+  if (!metadata) {
+    throw new Error("Could not read video metadata.");
+  }
+
+  if (metadata.duration > MAX_VIDEO_DURATION_SECONDS) {
+    throw new Error("Video must be under 10 seconds");
+  }
+
+  return metadata;
+}
+
 export default function HomePage() {
   const inputRef = useRef(null);
   const analyzeInFlightRef = useRef(false);
@@ -390,6 +421,7 @@ export default function HomePage() {
   const [history, setHistory] = useState([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState("");
   const [removingHistoryIds, setRemovingHistoryIds] = useState([]);
+  const [previewReady, setPreviewReady] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -468,11 +500,13 @@ export default function HomePage() {
       setSelectedMediaUrl("");
       setSelectedMediaType("image");
       setSelectedThumbnailUrl("");
+      setPreviewReady(false);
       return undefined;
     }
 
     let isCancelled = false;
     let objectUrl = "";
+    setPreviewReady(false);
 
     if (selectedFile.type.startsWith("video/")) {
       setSelectedMediaType("video");
@@ -544,24 +578,15 @@ export default function HomePage() {
       setSelectedMediaUrl("");
       setSelectedThumbnailUrl("");
       setSelectedMediaType("image");
+      setPreviewReady(false);
       return;
     }
 
     if (file.type.startsWith("video/")) {
-      if (file.size > MAX_VIDEO_FILE_BYTES) {
-        setError("Video is too large. Choose a clip under 2 MB.");
-        return;
-      }
-
-      const metadata = await loadVideoMetadata(file).catch(() => null);
-
-      if (!metadata) {
-        setError("Could not read video metadata.");
-        return;
-      }
-
-      if (metadata.duration > MAX_VIDEO_DURATION_SECONDS) {
-        setError("Video must be 10 seconds or shorter.");
+      try {
+        await validateVideoFile(file);
+      } catch (err) {
+        setError(err.message || "Could not prepare video.");
         return;
       }
     }
@@ -577,6 +602,7 @@ export default function HomePage() {
     setSelectedMediaUrl("");
     setSelectedMediaType("image");
     setSelectedThumbnailUrl("");
+    setPreviewReady(false);
     setResult(null);
     setBusyMessage("");
     setError("");
@@ -606,6 +632,7 @@ export default function HomePage() {
       setSelectedMediaUrl("");
       setSelectedMediaType("image");
       setSelectedThumbnailUrl("");
+      setPreviewReady(false);
     } catch (err) {
       setError(err.message || "Logout failed.");
     }
@@ -624,7 +651,7 @@ export default function HomePage() {
       return {
         mediaType,
         mediaUrl: await fileToDataUrl(file),
-        thumbnailUrl: thumbnailUrl || (await captureVideoThumbnail(file)),
+        thumbnailUrl: thumbnailUrl || (await captureVideoThumbnail(file, 0)),
       };
     }
 
@@ -686,6 +713,7 @@ export default function HomePage() {
         setSelectedMediaUrl("");
         setSelectedMediaType("image");
         setSelectedThumbnailUrl("");
+        setPreviewReady(false);
       }
 
       const item = history.find((entry) => entry.id === itemId);
@@ -783,6 +811,15 @@ export default function HomePage() {
       return;
     }
 
+    if (selectedFile.type.startsWith("video/")) {
+      try {
+        await validateVideoFile(selectedFile);
+      } catch (err) {
+        setError(err.message || "Could not prepare video.");
+        return;
+      }
+    }
+
     analyzeInFlightRef.current = true;
     setLoading(true);
     setError("");
@@ -853,6 +890,7 @@ export default function HomePage() {
     setSelectedMediaType(media.mediaType);
     setSelectedMediaUrl(media.mediaUrl);
     setSelectedThumbnailUrl(media.thumbnailUrl);
+    setPreviewReady(false);
     setError("");
 
     if (media.isMissingLocalVideo) {
@@ -1041,18 +1079,20 @@ export default function HomePage() {
                       {selectedMediaType === "video" ? (
                         <div className="preview-video-shell">
                           <video
-                            className="preview-video"
+                            className={`preview-video ${previewReady ? "is-ready" : ""}`}
                             src={selectedMediaUrl}
                             poster={selectedThumbnailUrl || undefined}
                             controls
                             playsInline
+                            onLoadedData={() => setPreviewReady(true)}
                           />
                         </div>
                       ) : (
                         <img
-                          className="preview-image"
+                          className={`preview-image ${previewReady ? "is-ready" : ""}`}
                           src={selectedMediaUrl}
                           alt="Selected media"
+                          onLoad={() => setPreviewReady(true)}
                         />
                       )}
                     </div>
@@ -1611,6 +1651,8 @@ export default function HomePage() {
         .preview-frame {
           width: 100%;
           min-height: 280px;
+          height: clamp(280px, 42vh, 420px);
+          max-height: 420px;
           padding: 14px;
           display: flex;
           align-items: center;
@@ -1620,19 +1662,25 @@ export default function HomePage() {
 
         .preview-image {
           width: 100%;
-          max-width: 500px;
-          height: auto;
-          max-height: 360px;
-          object-fit: cover;
-          object-position: center;
+          height: 100%;
+          max-width: 100%;
+          max-height: 100%;
+          object-fit: contain;
+          object-position: center center;
           display: block;
           border-radius: 16px;
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+          opacity: 0;
+          transform: scale(0.985);
+          transition:
+            opacity 0.35s ease,
+            transform 0.35s ease;
         }
 
         .preview-video-shell {
           width: 100%;
-          max-width: 500px;
+          height: 100%;
+          max-width: 100%;
           border-radius: 16px;
           overflow: hidden;
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
@@ -1641,9 +1689,24 @@ export default function HomePage() {
         .preview-video {
           display: block;
           width: 100%;
-          max-height: 360px;
+          height: 100%;
+          max-width: 100%;
+          max-height: 100%;
           background: #050608;
           border-radius: 16px;
+          object-fit: contain;
+          object-position: center center;
+          opacity: 0;
+          transform: scale(0.985);
+          transition:
+            opacity 0.35s ease,
+            transform 0.35s ease;
+        }
+
+        .preview-image.is-ready,
+        .preview-video.is-ready {
+          opacity: 1;
+          transform: scale(1);
         }
 
         .upload-footer {

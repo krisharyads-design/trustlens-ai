@@ -461,6 +461,55 @@ function renderHighlightedText(text) {
   });
 }
 
+function createHeatmapSpots(seed, mediaType = "image") {
+  const source = String(seed || "trustlens");
+  let hash = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    hash = (hash * 31 + source.charCodeAt(index)) >>> 0;
+  }
+
+  const nextRandom = () => {
+    hash = (1664525 * hash + 1013904223) >>> 0;
+    return hash / 4294967296;
+  };
+
+  const presets =
+    mediaType === "video"
+      ? [
+          { x: 24, y: 22 },
+          { x: 68, y: 28 },
+          { x: 38, y: 62 },
+          { x: 72, y: 70 },
+        ]
+      : [
+          { x: 28, y: 20 },
+          { x: 64, y: 24 },
+          { x: 46, y: 48 },
+          { x: 22, y: 72 },
+        ];
+
+  const spotCount = 2 + Math.floor(nextRandom() * 3);
+
+  return Array.from({ length: spotCount }, (_, index) => {
+    const preset = presets[index % presets.length];
+    const driftX = (nextRandom() - 0.5) * 14;
+    const driftY = (nextRandom() - 0.5) * 14;
+    const size = 64 + Math.round(nextRandom() * 36);
+    const delay = Number((nextRandom() * 1.2).toFixed(2));
+    const duration = Number((1.8 + nextRandom() * 1.2).toFixed(2));
+
+    return {
+      id: `${source}-${index}`,
+      x: Math.max(8, Math.min(82, preset.x + driftX)),
+      y: Math.max(8, Math.min(82, preset.y + driftY)),
+      size,
+      delay,
+      duration,
+    };
+  });
+}
+
 export default function HomePage() {
   const inputRef = useRef(null);
   const analyzeInFlightRef = useRef(false);
@@ -482,6 +531,8 @@ export default function HomePage() {
   const [removingHistoryIds, setRemovingHistoryIds] = useState([]);
   const [previewReady, setPreviewReady] = useState(false);
   const [loadingPhaseIndex, setLoadingPhaseIndex] = useState(0);
+  const [showHeatmapOverlay, setShowHeatmapOverlay] = useState(false);
+  const [heatmapSpots, setHeatmapSpots] = useState([]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -645,6 +696,21 @@ export default function HomePage() {
 
     return () => window.clearInterval(timer);
   }, [loading]);
+
+  useEffect(() => {
+    if (!result || !selectedMediaUrl) {
+      setHeatmapSpots([]);
+      return;
+    }
+
+    const overlaySeed = [
+      result.fileName || result.reason || "analysis",
+      result.trustScore || 0,
+      selectedMediaType,
+    ].join(":");
+
+    setHeatmapSpots(createHeatmapSpots(overlaySeed, selectedMediaType));
+  }, [result, selectedMediaType, selectedMediaUrl]);
 
   async function handleFileSelect(file) {
     if (!file) {
@@ -1184,27 +1250,48 @@ export default function HomePage() {
                 />
 
                 {selectedMediaUrl ? (
-                  <div className="preview-shell">
-                    <div className="preview-frame">
-                      {selectedMediaType === "video" ? (
-                        <div className="preview-video-shell">
-                          <video
-                            className={`preview-video ${previewReady ? "is-ready" : ""}`}
+                  <div className="preview-wrapper">
+                    <div className="preview-shell">
+                      <div className="preview-frame">
+                        {selectedMediaType === "video" ? (
+                          <div className="preview-video-shell">
+                            <video
+                              className={`preview-video ${previewReady ? "is-ready" : ""}`}
+                              src={selectedMediaUrl}
+                              poster={selectedThumbnailUrl || undefined}
+                              controls
+                              playsInline
+                              onLoadedData={() => setPreviewReady(true)}
+                            />
+                          </div>
+                        ) : (
+                          <img
+                            className={`preview-image ${previewReady ? "is-ready" : ""}`}
                             src={selectedMediaUrl}
-                            poster={selectedThumbnailUrl || undefined}
-                            controls
-                            playsInline
-                            onLoadedData={() => setPreviewReady(true)}
+                            alt="Selected media"
+                            onLoad={() => setPreviewReady(true)}
                           />
-                        </div>
-                      ) : (
-                        <img
-                          className={`preview-image ${previewReady ? "is-ready" : ""}`}
-                          src={selectedMediaUrl}
-                          alt="Selected media"
-                          onLoad={() => setPreviewReady(true)}
-                        />
-                      )}
+                        )}
+
+                        {showHeatmapOverlay && heatmapSpots.length > 0 && activeResult ? (
+                          <div className="heatmap" aria-hidden="true">
+                            {heatmapSpots.map((spot) => (
+                              <span
+                                key={spot.id}
+                                className="spot"
+                                style={{
+                                  left: `${spot.x}%`,
+                                  top: `${spot.y}%`,
+                                  width: `${spot.size}px`,
+                                  height: `${spot.size}px`,
+                                  animationDelay: `${spot.delay}s`,
+                                  animationDuration: `${spot.duration}s`,
+                                }}
+                              />
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -1232,6 +1319,18 @@ export default function HomePage() {
                     Choose File
                   </button>
                 </div>
+
+                {selectedMediaUrl && activeResult ? (
+                  <button
+                    type="button"
+                    className={`ghost-button overlay-toggle ${showHeatmapOverlay ? "active" : ""}`}
+                    onClick={() => setShowHeatmapOverlay((current) => !current)}
+                  >
+                    {showHeatmapOverlay
+                      ? "Hide AI Analysis Overlay"
+                      : "Show AI Analysis Overlay"}
+                  </button>
+                ) : null}
               </div>
 
               <button
@@ -1760,6 +1859,10 @@ export default function HomePage() {
             0 0 0 1px rgba(255, 255, 255, 0.03) inset;
         }
 
+        .preview-wrapper {
+          position: relative;
+        }
+
         .preview-frame {
           width: 100%;
           min-height: 280px;
@@ -1770,6 +1873,24 @@ export default function HomePage() {
           align-items: center;
           justify-content: center;
           overflow: hidden;
+        }
+
+        .heatmap {
+          position: absolute;
+          inset: 14px;
+          pointer-events: none;
+          overflow: hidden;
+          border-radius: 16px;
+          mix-blend-mode: screen;
+        }
+
+        .spot {
+          position: absolute;
+          background: radial-gradient(circle, rgba(255, 72, 72, 0.4), transparent 68%);
+          border-radius: 50%;
+          filter: blur(10px);
+          transform: translate(-50%, -50%);
+          animation: pulse 2s infinite;
         }
 
         .preview-image {
@@ -1827,6 +1948,17 @@ export default function HomePage() {
           align-items: center;
           justify-content: space-between;
           gap: 12px;
+        }
+
+        .overlay-toggle {
+          margin-top: 12px;
+          width: 100%;
+        }
+
+        .overlay-toggle.active {
+          background: rgba(239, 68, 68, 0.08);
+          border-color: rgba(248, 113, 113, 0.35);
+          color: #fecaca;
         }
 
         .file-name {
@@ -2116,6 +2248,23 @@ export default function HomePage() {
           to {
             opacity: 1;
             transform: translateY(0);
+          }
+        }
+
+        @keyframes pulse {
+          0% {
+            opacity: 0.4;
+            transform: translate(-50%, -50%) scale(1);
+          }
+
+          50% {
+            opacity: 0.8;
+            transform: translate(-50%, -50%) scale(1.2);
+          }
+
+          100% {
+            opacity: 0.4;
+            transform: translate(-50%, -50%) scale(1);
           }
         }
 

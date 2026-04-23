@@ -23,7 +23,7 @@ const INITIAL_IMAGE_QUALITY = 0.7;
 const MIN_IMAGE_QUALITY = 0.4;
 const MAX_STORED_IMAGE_BYTES = 200 * 1024;
 const MAX_VIDEO_DURATION_SECONDS = 10;
-const MAX_VIDEO_FILE_BYTES = 2 * 1024 * 1024;
+const MAX_VIDEO_FILE_BYTES = 10 * 1024 * 1024;
 const LOCAL_VIDEO_PREFIX = "local-video://";
 const FALLBACK_RESULT = {
   status: "Suspicious",
@@ -387,7 +387,7 @@ async function validateVideoFile(file) {
   }
 
   if (file.size > MAX_VIDEO_FILE_BYTES) {
-    throw new Error("Video is too large. Choose a clip under 2 MB.");
+    throw new Error("Video size must be under 10MB");
   }
 
   const metadata = await loadVideoMetadata(file).catch(() => null);
@@ -453,9 +453,10 @@ export default function HomePage() {
       const invalidDocIds = [];
       const items = snapshot.docs.map((docSnapshot) => {
         const data = docSnapshot.data();
-        const mediaType = data.mediaType || (data.imageUrl ? "image" : "image");
+        const mediaType = data.mediaType || data.type || (data.imageUrl ? "image" : "image");
         const rawMediaUrl = data.mediaUrl || data.imageUrl || null;
-        const rawThumbnailUrl = data.thumbnailUrl || (mediaType === "image" ? rawMediaUrl : null);
+        const rawThumbnailUrl =
+          data.thumbnailUrl || data.thumbnail || (mediaType === "image" ? rawMediaUrl : null);
         const invalidMediaUrl = isInvalidStoredMedia(rawMediaUrl, mediaType);
         const invalidThumbnailUrl = isInvalidStoredMedia(rawThumbnailUrl, "image");
 
@@ -670,9 +671,18 @@ export default function HomePage() {
     }
 
     const mediaType = media.mediaType || "image";
+    const resultSummary = {
+      status: savedResult.status,
+      trustScore: savedResult.trustScore,
+      reason: savedResult.reason,
+      context: savedResult.context,
+      isEstimated: Boolean(savedResult.isEstimated),
+    };
+
     const docRef = await addDoc(getUserHistoryCollection(user.uid), {
       userName: user.displayName || "",
       fileName: fileName || "",
+      type: mediaType,
       status: savedResult.status,
       trustScore: savedResult.trustScore,
       reason: savedResult.reason,
@@ -681,7 +691,10 @@ export default function HomePage() {
       mediaType,
       mediaUrl:
         mediaType === "video" ? getLocalHistoryMediaRef(user.uid, "pending") : media.mediaUrl || null,
+      thumbnail: media.thumbnailUrl || null,
       thumbnailUrl: media.thumbnailUrl || null,
+      result: resultSummary,
+      timestamp: serverTimestamp(),
       imageUrl: mediaType === "image" ? media.mediaUrl || null : null,
       createdAt: serverTimestamp(),
     });
@@ -943,7 +956,7 @@ export default function HomePage() {
                     <div className="history-list">
                       {history.map((item) => {
                         const itemStatus = getStatusFromScore(item.trustScore);
-                        const itemTimestamp = formatHistoryTimestamp(item.createdAt);
+                        const itemTimestamp = formatHistoryTimestamp(item.createdAt || item.timestamp);
                         const historyThumbnail =
                           item.thumbnailUrl || (item.mediaType === "image" ? item.mediaUrl : "");
 
@@ -1102,7 +1115,7 @@ export default function HomePage() {
                     <div className="upload-icon">^</div>
                     <p className="upload-title">Drag and drop your file here</p>
                     <p className="subtext">
-                      Upload an image or a video up to 10 seconds and 2 MB.
+                      Upload an image or a video up to 10 seconds and 10 MB.
                     </p>
                   </div>
                 )}

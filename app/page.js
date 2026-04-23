@@ -35,6 +35,7 @@ const FALLBACK_RESULT = {
   context: "High demand detected. Showing estimated result.",
   isEstimated: true,
 };
+const LOADING_PHASES = ["Analyzing...", "Detecting patterns...", "Finalizing result..."];
 
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -435,6 +436,31 @@ function getAnalysisCacheKey(file) {
   return [file.name, file.size, file.type, file.lastModified].join(":");
 }
 
+function renderHighlightedText(text) {
+  const value = String(text || "");
+  const matches = value.split(/(AI Generated|Real)/g);
+
+  return matches.map((part, index) => {
+    if (part === "AI Generated") {
+      return (
+        <span key={`${part}-${index}`} className="keyword-ai">
+          {part}
+        </span>
+      );
+    }
+
+    if (part === "Real") {
+      return (
+        <span key={`${part}-${index}`} className="keyword-real">
+          {part}
+        </span>
+      );
+    }
+
+    return part;
+  });
+}
+
 export default function HomePage() {
   const inputRef = useRef(null);
   const analyzeInFlightRef = useRef(false);
@@ -455,6 +481,7 @@ export default function HomePage() {
   const [selectedHistoryId, setSelectedHistoryId] = useState("");
   const [removingHistoryIds, setRemovingHistoryIds] = useState([]);
   const [previewReady, setPreviewReady] = useState(false);
+  const [loadingPhaseIndex, setLoadingPhaseIndex] = useState(0);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -605,6 +632,19 @@ export default function HomePage() {
 
     return () => clearInterval(timer);
   }, [cooldown]);
+
+  useEffect(() => {
+    if (!loading) {
+      setLoadingPhaseIndex(0);
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      setLoadingPhaseIndex((current) => (current + 1) % LOADING_PHASES.length);
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [loading]);
 
   async function handleFileSelect(file) {
     if (!file) {
@@ -1195,7 +1235,7 @@ export default function HomePage() {
               </div>
 
               <button
-                className="primary-button analyze-button"
+                className="primary-button analyze-button analyze-btn"
                 onClick={handleAnalyze}
                 disabled={analyzeDisabled}
               >
@@ -1222,40 +1262,42 @@ export default function HomePage() {
                   <span className="spinner large" />
                   <div>
                     <p className="eyebrow">Processing</p>
-                    <h2>Analyzing your media...</h2>
+                    <h2>{LOADING_PHASES[loadingPhaseIndex]}</h2>
                     <p className="subtext">
                       {busyMessage || "Analyzing... this may take a few seconds"}
                     </p>
                   </div>
                 </div>
               ) : activeResult ? (
-                <div className="result-content">
-                  <div className="result-header">
-                    <div>
-                      <p className="eyebrow">Latest result</p>
-                      <h2>{activeResult.fileName || "Selected Result"}</h2>
+                <div className="result-card">
+                  <div className="result-content">
+                    <div className="result-header">
+                      <div>
+                        <p className="eyebrow">Latest result</p>
+                        <h2>{activeResult.fileName || "Selected Result"}</h2>
+                      </div>
+                      <span className={`status-badge ${activeResult.status.toLowerCase()}`}>
+                        {activeResult.status}
+                      </span>
                     </div>
-                    <span className={`status-badge ${activeResult.status.toLowerCase()}`}>
-                      {activeResult.status}
-                    </span>
-                  </div>
 
-                  <TrustMeter score={activeResult.trustScore} />
+                    <TrustMeter score={activeResult.trustScore} />
 
-                  {activeResult.isEstimated ? (
-                    <p className="busy-message">
-                      {busyMessage || "High demand detected. Showing estimated result."}
-                    </p>
-                  ) : null}
+                    {activeResult.isEstimated ? (
+                      <p className="busy-message">
+                        {busyMessage || "High demand detected. Showing estimated result."}
+                      </p>
+                    ) : null}
 
-                  <div className="result-block">
-                    <p className="eyebrow">Reason</p>
-                    <p>{activeResult.reason}</p>
-                  </div>
+                    <div className="result-block">
+                      <p className="eyebrow">Reason</p>
+                      <p>{renderHighlightedText(activeResult.reason)}</p>
+                    </div>
 
-                  <div className="result-block">
-                    <p className="eyebrow">Context</p>
-                    <p>{activeResult.context}</p>
+                    <div className="result-block">
+                      <p className="eyebrow">Context</p>
+                      <p>{renderHighlightedText(activeResult.context)}</p>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -1445,7 +1487,7 @@ export default function HomePage() {
 
         .history-item:hover {
           background: rgba(255, 255, 255, 0.05);
-          transform: scale(1.01);
+          transform: translateX(4px);
         }
 
         .history-item.active {
@@ -1799,7 +1841,7 @@ export default function HomePage() {
           border-radius: 10px;
           font-size: 14px;
           cursor: pointer;
-          transition: background 0.2s ease, border-color 0.2s ease;
+          transition: all 0.2s ease;
         }
 
         .primary-button {
@@ -1840,6 +1882,15 @@ export default function HomePage() {
           min-height: 46px;
         }
 
+        .analyze-btn {
+          border-radius: 10px;
+          transition: all 0.2s ease;
+        }
+
+        .analyze-btn:hover:not(:disabled) {
+          transform: scale(1.03);
+        }
+
         .loading-inline,
         .loading-state {
           display: flex;
@@ -1849,6 +1900,7 @@ export default function HomePage() {
 
         .loading-state {
           min-height: 240px;
+          animation: fadeIn 0.3s ease;
         }
 
         .spinner {
@@ -1873,6 +1925,16 @@ export default function HomePage() {
           display: flex;
           flex-direction: column;
           gap: 24px;
+        }
+
+        .result-card {
+          padding: 16px;
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          animation: fadeIn 0.3s ease;
         }
 
         .main-preview {
@@ -1927,6 +1989,16 @@ export default function HomePage() {
           background: rgba(239, 68, 68, 0.12);
           color: #fca5a5;
           border-color: rgba(239, 68, 68, 0.24);
+        }
+
+        .keyword-real {
+          color: #86efac;
+          font-weight: 600;
+        }
+
+        .keyword-ai {
+          color: #fca5a5;
+          font-weight: 600;
         }
 
         .trust-meter {
@@ -2032,6 +2104,18 @@ export default function HomePage() {
         @keyframes spin {
           to {
             transform: rotate(360deg);
+          }
+        }
+
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+            transform: translateY(5px);
+          }
+
+          to {
+            opacity: 1;
+            transform: translateY(0);
           }
         }
 

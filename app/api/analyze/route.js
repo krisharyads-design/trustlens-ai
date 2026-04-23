@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 
 const GEMINI_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent";
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 const MAX_VIDEO_FRAMES = 10;
-const GEMINI_TIMEOUT_MS = 10_000;
 
 const ANALYSIS_SCHEMA = {
   type: "object",
@@ -144,50 +143,25 @@ function toUiResult(frameResult, extra = {}) {
   });
 }
 
-function createHttpError(message, status) {
-  const error = new Error(message);
-  error.status = status;
-  return error;
-}
-
 async function requestGemini(apiKey, parts) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
-  let geminiResponse;
-  let geminiJson = {};
-
-  try {
-    geminiResponse = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+  const geminiResponse = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseJsonSchema: ANALYSIS_SCHEMA,
       },
-      signal: controller.signal,
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseJsonSchema: ANALYSIS_SCHEMA,
-        },
-      }),
-    });
+    }),
+  });
 
-    geminiJson = await geminiResponse.json().catch(() => ({}));
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      throw createHttpError("API timeout", 504);
-    }
-
-    throw createHttpError(error?.message || "Gemini request failed. Please try again.", 500);
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  const geminiJson = await geminiResponse.json();
 
   if (!geminiResponse.ok) {
-    throw createHttpError(
-      geminiJson?.error?.message || "Gemini request failed. Please try again.",
-      geminiResponse.status || 500
-    );
+    throw new Error(geminiJson?.error?.message || "Gemini request failed. Please try again.");
   }
 
   const modelText = getModelText(geminiJson);
@@ -339,7 +313,7 @@ export async function POST(request) {
       {
         error: error.message || "Server error while analyzing media.",
       },
-      { status: error?.status || 500 }
+      { status: 500 }
     );
   }
 }

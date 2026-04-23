@@ -17,7 +17,6 @@ import { auth, authPersistenceReady, db, provider } from "./firebase";
 
 const ACCEPTED_TYPES = "image/*,video/*";
 const ANALYZE_COOLDOWN_SECONDS = 15;
-const RETRY_DELAY_MS = 2000;
 const MAX_IMAGE_WIDTH = 600;
 const INITIAL_IMAGE_QUALITY = 0.7;
 const MIN_IMAGE_QUALITY = 0.4;
@@ -28,14 +27,9 @@ const MAX_VIDEO_DURATION_SECONDS = 10;
 const MAX_VIDEO_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_ANALYZE_VIDEO_FRAMES = 3;
 const LOCAL_VIDEO_PREFIX = "local-video://";
-const FALLBACK_RESULT = {
-  status: "Suspicious",
-  trustScore: 60,
-  reason: "High demand detected, estimated result shown",
-  context: "High demand detected. Showing estimated result.",
-  isEstimated: true,
-};
 const LOADING_PHASES = ["Analyzing...", "Detecting patterns...", "Finalizing result..."];
+const ANALYSIS_RETRY_COUNT = 3;
+const ANALYSIS_RETRY_DELAY_MS = 1000;
 
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -371,13 +365,33 @@ function getUserHistoryCollection(uid) {
   return collection(db, "users", uid, "history");
 }
 
-function isRetriableAnalysisError(message) {
-  const normalized = String(message || "").toLowerCase();
-  return (
-    normalized.includes("quota") ||
-    normalized.includes("busy") ||
-    normalized.includes("high demand")
-  );
+function createFallbackResult() {
+  return {
+    status: "Suspicious",
+    trustScore: 60,
+    reason: "AI is busy, showing estimated result",
+    context: "AI is busy. Showing an estimated result after repeated retries failed.",
+    isEstimated: true,
+  };
+}
+
+function getAnalysisErrorDetails(error) {
+  const message = String(error?.message || "").trim();
+  const status =
+    Number(error?.status) ||
+    Number(error?.responseStatus) ||
+    (/status\s*(\d{3})/i.exec(message)?.[1] ? Number(/status\s*(\d{3})/i.exec(message)?.[1]) : 0);
+  const normalized = message.toLowerCase();
+  const isTimeout =
+    status === 504 || normalized.includes("timeout") || normalized.includes("timed out");
+  const isBusy = status === 429 || isTimeout;
+
+  return {
+    message: message || "Analysis failed.",
+    status,
+    isTimeout,
+    isBusy,
+  };
 }
 
 function isInvalidStoredMedia(value, mediaType = "image") {
@@ -1072,24 +1086,35 @@ export default function HomePage() {
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      throw new Error(data.error || "Analysis failed.");
+      const error = new Error(data.error || "Analysis failed.");
+      error.status = response.status;
+      throw error;
     }
 
     return data;
   }
 
-  async function analyzeWithRetry(payload, retries = 2) {
-    try {
-      return await requestAnalysis(payload);
-    } catch (error) {
-      if (retries > 0 && isRetriableAnalysisError(error?.message)) {
-        setBusyMessage("High demand detected. Retrying automatically...");
-        await delay(RETRY_DELAY_MS);
-        return analyzeWithRetry(payload, retries - 1);
-      }
+  async function analyzeWithRetry(payload) {
+    let lastError = null;
 
-      throw error;
+    for (let attempt = 0; attempt < ANALYSIS_RETRY_COUNT; attempt += 1) {
+      try {
+        return await requestAnalysis(payload);
+      } catch (error) {
+        lastError = error;
+        const details = getAnalysisErrorDetails(error);
+        const hasAttemptsLeft = attempt < ANALYSIS_RETRY_COUNT - 1;
+
+        if (!details.isBusy || !hasAttemptsLeft) {
+          break;
+        }
+
+        setBusyMessage("Retrying analysis...");
+        await delay(ANALYSIS_RETRY_DELAY_MS);
+      }
     }
+
+    throw lastError || new Error("Analysis failed.");
   }
 
   function resolveHistoryMedia(item) {
@@ -1149,9 +1174,11 @@ export default function HomePage() {
         try {
           data = await analyzeWithRetry(payload);
         } catch (err) {
-          if (isRetriableAnalysisError(err?.message)) {
-            data = FALLBACK_RESULT;
-            setBusyMessage("High demand detected. Showing estimated result.");
+          const details = getAnalysisErrorDetails(err);
+
+          if (details.isBusy) {
+            data = createFallbackResult();
+            setBusyMessage("AI is busy. Showing estimated result.");
           } else {
             throw err;
           }
@@ -1205,7 +1232,7 @@ export default function HomePage() {
     setSelectedFile(null);
     setSelectedHistoryId(item.id);
     setResult(item);
-    setBusyMessage(item.isEstimated ? "High demand detected. Showing estimated result." : "");
+    setBusyMessage(item.isEstimated ? "AI is busy. Showing estimated result." : "");
     setSelectedMediaType(media.mediaType);
     setSelectedMediaUrl(media.mediaUrl);
     setSelectedThumbnailUrl(media.thumbnailUrl);
@@ -1611,7 +1638,7 @@ export default function HomePage() {
 
                     {activeResult.isEstimated ? (
                       <p className="busy-message">
-                        {busyMessage || "High demand detected. Showing estimated result."}
+                        {busyMessage || "AI is busy. Showing estimated result."}
                       </p>
                     ) : null}
 

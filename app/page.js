@@ -15,15 +15,18 @@ import {
 } from "firebase/firestore";
 import { auth, authPersistenceReady, db, provider } from "./firebase";
 
-const ACCEPTED_TYPES = "image/*,video/mp4,video/webm";
+const ACCEPTED_TYPES = "image/*,video/*";
 const ANALYZE_COOLDOWN_SECONDS = 15;
 const RETRY_DELAY_MS = 2000;
 const MAX_IMAGE_WIDTH = 600;
 const INITIAL_IMAGE_QUALITY = 0.7;
 const MIN_IMAGE_QUALITY = 0.4;
 const MAX_STORED_IMAGE_BYTES = 200 * 1024;
+const MAX_ANALYZE_IMAGE_WIDTH = 800;
+const ANALYZE_IMAGE_QUALITY = 0.7;
 const MAX_VIDEO_DURATION_SECONDS = 10;
 const MAX_VIDEO_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_ANALYZE_VIDEO_FRAMES = 3;
 const LOCAL_VIDEO_PREFIX = "local-video://";
 const FALLBACK_RESULT = {
   status: "Suspicious",
@@ -32,21 +35,6 @@ const FALLBACK_RESULT = {
   context: "High demand detected. Showing estimated result.",
   isEstimated: true,
 };
-
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      const result = String(reader.result || "");
-      const base64 = result.split(",")[1];
-      resolve(base64);
-    };
-
-    reader.onerror = () => reject(new Error("Could not read file."));
-    reader.readAsDataURL(file);
-  });
-}
 
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -85,7 +73,10 @@ function estimateDataUrlBytes(dataUrl) {
   return Math.floor((base64.length * 3) / 4) - padding;
 }
 
-async function compressImageFile(file) {
+async function resizeImageFile(
+  file,
+  { maxWidth, initialQuality, minQuality, maxBytes, minWidth, minHeight, errorMessage }
+) {
   const objectUrl = URL.createObjectURL(file);
 
   try {
@@ -99,17 +90,17 @@ async function compressImageFile(file) {
 
     const sourceWidth = image.naturalWidth || image.width;
     const sourceHeight = image.naturalHeight || image.height;
-    const scale = sourceWidth > MAX_IMAGE_WIDTH ? MAX_IMAGE_WIDTH / sourceWidth : 1;
+    const scale = sourceWidth > maxWidth ? maxWidth / sourceWidth : 1;
 
     let targetWidth = Math.max(1, Math.round(sourceWidth * scale));
     let targetHeight = Math.max(1, Math.round(sourceHeight * scale));
-    let quality = INITIAL_IMAGE_QUALITY;
+    let quality = initialQuality;
 
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d");
 
     if (!context) {
-      throw new Error("Could not prepare image preview.");
+      throw new Error(errorMessage);
     }
 
     let dataUrl = "";
@@ -121,18 +112,15 @@ async function compressImageFile(file) {
       context.drawImage(image, 0, 0, targetWidth, targetHeight);
       dataUrl = canvas.toDataURL("image/jpeg", quality);
 
-      if (
-        estimateDataUrlBytes(dataUrl) <= MAX_STORED_IMAGE_BYTES ||
-        (quality <= MIN_IMAGE_QUALITY && targetWidth <= 240)
-      ) {
+      if (estimateDataUrlBytes(dataUrl) <= maxBytes || (quality <= minQuality && targetWidth <= minWidth)) {
         break;
       }
 
-      if (quality > MIN_IMAGE_QUALITY) {
-        quality = Math.max(MIN_IMAGE_QUALITY, quality - 0.08);
+      if (quality > minQuality) {
+        quality = Math.max(minQuality, quality - 0.08);
       } else {
-        targetWidth = Math.max(240, Math.round(targetWidth * 0.85));
-        targetHeight = Math.max(180, Math.round(targetHeight * 0.85));
+        targetWidth = Math.max(minWidth, Math.round(targetWidth * 0.85));
+        targetHeight = Math.max(minHeight, Math.round(targetHeight * 0.85));
       }
     }
 
@@ -140,6 +128,30 @@ async function compressImageFile(file) {
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+}
+
+async function compressImageFile(file) {
+  return resizeImageFile(file, {
+    maxWidth: MAX_IMAGE_WIDTH,
+    initialQuality: INITIAL_IMAGE_QUALITY,
+    minQuality: MIN_IMAGE_QUALITY,
+    maxBytes: MAX_STORED_IMAGE_BYTES,
+    minWidth: 240,
+    minHeight: 180,
+    errorMessage: "Could not prepare image preview.",
+  });
+}
+
+async function createAnalyzableImage(file) {
+  return resizeImageFile(file, {
+    maxWidth: MAX_ANALYZE_IMAGE_WIDTH,
+    initialQuality: ANALYZE_IMAGE_QUALITY,
+    minQuality: ANALYZE_IMAGE_QUALITY,
+    maxBytes: MAX_VIDEO_FILE_BYTES,
+    minWidth: 320,
+    minHeight: 240,
+    errorMessage: "Could not prepare image for analysis.",
+  });
 }
 
 async function loadVideoMetadata(file) {
@@ -214,14 +226,20 @@ async function extractVideoFrames(file) {
   video.crossOrigin = "anonymous";
 
   await waitForEvent(video, "loadedmetadata");
+  await waitForEvent(video, "loadeddata");
 
   canvas.width = video.videoWidth || 640;
   canvas.height = video.videoHeight || 360;
 
   const duration = Math.min(video.duration || 1, MAX_VIDEO_DURATION_SECONDS);
-  const totalFrames = Math.min(MAX_VIDEO_DURATION_SECONDS, Math.max(1, Math.ceil(duration)));
+  const totalFrames = Math.min(MAX_ANALYZE_VIDEO_FRAMES, Math.max(1, Math.ceil(duration)));
   const timestamps = Array.from({ length: totalFrames }, (_, index) => {
-    const nextTime = Math.min(index + 0.5, Math.max(duration - 0.1, 0));
+    if (totalFrames === 1) {
+      return 0;
+    }
+
+    const position = (duration * index) / (totalFrames - 1);
+    const nextTime = Math.min(Math.max(position, 0), Math.max(duration - 0.1, 0));
     return Number(nextTime.toFixed(2));
   });
 
@@ -386,10 +404,6 @@ async function validateVideoFile(file) {
     throw new Error("Only MP4 and WebM videos are supported.");
   }
 
-  if (file.size > MAX_VIDEO_FILE_BYTES) {
-    throw new Error("Video size must be under 10MB");
-  }
-
   const metadata = await loadVideoMetadata(file).catch(() => null);
 
   if (!metadata) {
@@ -403,10 +417,29 @@ async function validateVideoFile(file) {
   return metadata;
 }
 
+function validateSelectedFile(file) {
+  if (!file) {
+    return;
+  }
+
+  if (file.size > MAX_VIDEO_FILE_BYTES) {
+    throw new Error("File must be under 10MB");
+  }
+}
+
+function getAnalysisCacheKey(file) {
+  if (!file) {
+    return "";
+  }
+
+  return [file.name, file.size, file.type, file.lastModified].join(":");
+}
+
 export default function HomePage() {
   const inputRef = useRef(null);
   const analyzeInFlightRef = useRef(false);
   const cleanedHistoryIdsRef = useRef(new Set());
+  const lastAnalysisCacheRef = useRef({ key: "", data: null });
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedMediaUrl, setSelectedMediaUrl] = useState("");
   const [selectedMediaType, setSelectedMediaType] = useState("image");
@@ -580,6 +613,13 @@ export default function HomePage() {
       setSelectedThumbnailUrl("");
       setSelectedMediaType("image");
       setPreviewReady(false);
+      return;
+    }
+
+    try {
+      validateSelectedFile(file);
+    } catch (err) {
+      setError(err.message || "Could not prepare file.");
       return;
     }
 
@@ -757,13 +797,15 @@ export default function HomePage() {
       };
     }
 
-    const data = await fileToBase64(file);
+    const dataUrl = await createAnalyzableImage(file);
+    const data = dataUrl.split(",")[1] || "";
+
     return {
       kind: "image",
       fileName: file.name,
-      mimeType: file.type,
+      mimeType: "image/jpeg",
       image: {
-        mimeType: file.type,
+        mimeType: "image/jpeg",
         data,
       },
     };
@@ -824,6 +866,13 @@ export default function HomePage() {
       return;
     }
 
+    try {
+      validateSelectedFile(selectedFile);
+    } catch (err) {
+      setError(err.message || "Could not prepare file.");
+      return;
+    }
+
     if (selectedFile.type.startsWith("video/")) {
       try {
         await validateVideoFile(selectedFile);
@@ -836,22 +885,30 @@ export default function HomePage() {
     analyzeInFlightRef.current = true;
     setLoading(true);
     setError("");
-    setBusyMessage("");
+    setBusyMessage("Analyzing... this may take a few seconds");
     setResult(null);
 
     try {
-      const payload = await createAnalyzePayload(selectedFile);
+      const cacheKey = getAnalysisCacheKey(selectedFile);
       let data = null;
 
-      try {
-        data = await analyzeWithRetry(payload);
-      } catch (err) {
-        if (isRetriableAnalysisError(err?.message)) {
-          data = FALLBACK_RESULT;
-          setBusyMessage("High demand detected. Showing estimated result.");
-        } else {
-          throw err;
+      if (lastAnalysisCacheRef.current.key === cacheKey && lastAnalysisCacheRef.current.data) {
+        data = lastAnalysisCacheRef.current.data;
+      } else {
+        const payload = await createAnalyzePayload(selectedFile);
+
+        try {
+          data = await analyzeWithRetry(payload);
+        } catch (err) {
+          if (isRetriableAnalysisError(err?.message)) {
+            data = FALLBACK_RESULT;
+            setBusyMessage("High demand detected. Showing estimated result.");
+          } else {
+            throw err;
+          }
         }
+
+        lastAnalysisCacheRef.current = { key: cacheKey, data };
       }
 
       const nextResult = {
@@ -1167,7 +1224,7 @@ export default function HomePage() {
                     <p className="eyebrow">Processing</p>
                     <h2>Analyzing your media...</h2>
                     <p className="subtext">
-                      We are preparing the file and sending it to the analysis API.
+                      {busyMessage || "Analyzing... this may take a few seconds"}
                     </p>
                   </div>
                 </div>

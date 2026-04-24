@@ -28,6 +28,7 @@ const MAX_VIDEO_DURATION_SECONDS = 10;
 const MAX_VIDEO_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_ANALYZE_VIDEO_FRAMES = 3;
 const LOCAL_VIDEO_PREFIX = "local-video://";
+const FREE_USAGE_STORAGE_KEY = "free_usage_count";
 const FALLBACK_RESULT = {
   status: "Suspicious",
   trustScore: 60,
@@ -510,6 +511,14 @@ function createHeatmapSpots(seed, mediaType = "image") {
   });
 }
 
+function readFreeUsageCount() {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+
+  return Number(window.localStorage.getItem(FREE_USAGE_STORAGE_KEY) || "0") || 0;
+}
+
 export default function HomePage() {
   const inputRef = useRef(null);
   const analyzeInFlightRef = useRef(false);
@@ -539,6 +548,13 @@ export default function HomePage() {
   const [comparisonSlider, setComparisonSlider] = useState(54);
   const [isComparisonDragging, setIsComparisonDragging] = useState(false);
   const [isComparisonAnimating, setIsComparisonAnimating] = useState(false);
+  const [freeUsageCount, setFreeUsageCount] = useState(0);
+  const [showUnlockModal, setShowUnlockModal] = useState(false);
+  const [guestLocked, setGuestLocked] = useState(false);
+
+  useEffect(() => {
+    setFreeUsageCount(readFreeUsageCount());
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -550,6 +566,9 @@ export default function HomePage() {
         setSelectedMediaUrl("");
         setSelectedMediaType("image");
         setSelectedThumbnailUrl("");
+      } else {
+        setGuestLocked(false);
+        setShowUnlockModal(false);
       }
     });
 
@@ -719,7 +738,7 @@ export default function HomePage() {
   }, [result, selectedMediaType, selectedMediaUrl]);
 
   useEffect(() => {
-    if (!result || !selectedMediaUrl) {
+    if (!result || !selectedMediaUrl || selectedMediaType !== "image") {
       setComparisonSlider(54);
       setIsComparisonAnimating(false);
       return undefined;
@@ -853,6 +872,16 @@ export default function HomePage() {
 
     const nextValue = ((event.clientX - bounds.left) / bounds.width) * 100;
     setComparisonSlider(Math.max(8, Math.min(92, nextValue)));
+  }
+
+  function incrementFreeUsageCount() {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const nextCount = readFreeUsageCount() + 1;
+    window.localStorage.setItem(FREE_USAGE_STORAGE_KEY, String(nextCount));
+    setFreeUsageCount(nextCount);
   }
 
   async function handleFileSelect(file) {
@@ -1131,6 +1160,16 @@ export default function HomePage() {
       }
     }
 
+    if (!user && freeUsageCount >= 1) {
+      setShowUnlockModal(true);
+      setGuestLocked(true);
+      return;
+    }
+
+    if (!user) {
+      incrementFreeUsageCount();
+    }
+
     analyzeInFlightRef.current = true;
     setLoading(true);
     setError("");
@@ -1225,7 +1264,15 @@ export default function HomePage() {
     ? { ...result, status: getStatusFromScore(result.trustScore) }
     : null;
 
-  const analyzeDisabled = loading || cooldown > 0;
+  const shouldShowComparison =
+    Boolean(activeResult) &&
+    selectedMediaType === "image" &&
+    activeResult.status !== "Real";
+  const shouldShowAuthenticMessage =
+    Boolean(activeResult) &&
+    selectedMediaType === "image" &&
+    activeResult.status === "Real";
+  const analyzeDisabled = loading || cooldown > 0 || guestLocked;
   const analyzeLabel = loading
     ? "Analyzing..."
     : cooldown > 0
@@ -1396,7 +1443,7 @@ export default function HomePage() {
                   <div className="preview-wrapper">
                     <div className="preview-shell">
                       <div className="preview-frame">
-                        {activeResult ? (
+                        {shouldShowComparison ? (
                           <div
                             ref={comparisonRef}
                             className={`comparison-container ${
@@ -1547,6 +1594,14 @@ export default function HomePage() {
                   </button>
                 </div>
 
+                <p className="free-scan-text">1 free scan available without login</p>
+
+                {shouldShowAuthenticMessage ? (
+                  <p className="authentic-message">
+                    This image appears authentic. No reconstruction needed.
+                  </p>
+                ) : null}
+
                 {selectedMediaUrl && activeResult ? (
                   <button
                     type="button"
@@ -1639,6 +1694,47 @@ export default function HomePage() {
           </div>
         </section>
       </main>
+
+      {showUnlockModal ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setShowUnlockModal(false)}>
+          <div
+            className="unlock-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="unlock-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p className="eyebrow">Upgrade Required</p>
+            <h2 id="unlock-modal-title">Unlock Full Access</h2>
+            <p className="subtext">
+              You&apos;ve used your 1 free analysis. Login to continue.
+            </p>
+            <div className="unlock-actions">
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  setGuestLocked(false);
+                  setShowUnlockModal(false);
+                  void handleGoogleLogin();
+                }}
+              >
+                Login with Google
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => {
+                  setGuestLocked(false);
+                  setShowUnlockModal(false);
+                }}
+              >
+                Maybe Later
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <style jsx>{`
         .page {
@@ -2320,6 +2416,23 @@ export default function HomePage() {
           gap: 12px;
         }
 
+        .free-scan-text {
+          margin: 12px 0 0;
+          font-size: 12px;
+          color: #a1a1b3;
+        }
+
+        .authentic-message {
+          margin: 12px 0 0;
+          padding: 12px 14px;
+          border-radius: 12px;
+          background: rgba(34, 197, 94, 0.1);
+          border: 1px solid rgba(34, 197, 94, 0.24);
+          color: #bbf7d0;
+          line-height: 1.5;
+          animation: fadeIn 0.3s ease;
+        }
+
         .overlay-toggle {
           margin-top: 12px;
           width: 100%;
@@ -2568,6 +2681,36 @@ export default function HomePage() {
           margin-top: 12px;
           color: #fca5a5;
           font-size: 14px;
+        }
+
+        .modal-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 30;
+          background: rgba(3, 6, 12, 0.7);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+        }
+
+        .unlock-modal {
+          width: min(100%, 420px);
+          padding: 24px;
+          border-radius: 20px;
+          background: rgba(12, 18, 30, 0.94);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          box-shadow: 0 24px 90px rgba(0, 0, 0, 0.45);
+          animation: fadeIn 0.25s ease;
+        }
+
+        .unlock-actions {
+          margin-top: 18px;
+          display: flex;
+          gap: 12px;
+          flex-wrap: wrap;
         }
 
         .cooldown-text {

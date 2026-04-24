@@ -536,9 +536,7 @@ export default function HomePage() {
   const analyzeInFlightRef = useRef(false);
   const cleanedHistoryIdsRef = useRef(new Set());
   const lastAnalysisCacheRef = useRef({ key: "", data: null });
-  const comparisonRef = useRef(null);
   const originalVideoRef = useRef(null);
-  const reconstructedVideoRef = useRef(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedMediaUrl, setSelectedMediaUrl] = useState("");
   const [selectedMediaType, setSelectedMediaType] = useState("image");
@@ -557,9 +555,6 @@ export default function HomePage() {
   const [loadingPhaseIndex, setLoadingPhaseIndex] = useState(0);
   const [showHeatmapOverlay, setShowHeatmapOverlay] = useState(false);
   const [heatmapSpots, setHeatmapSpots] = useState([]);
-  const [comparisonSlider, setComparisonSlider] = useState(54);
-  const [isComparisonDragging, setIsComparisonDragging] = useState(false);
-  const [isComparisonAnimating, setIsComparisonAnimating] = useState(false);
   const [freeUsageCount, setFreeUsageCount] = useState(0);
   const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [guestLocked, setGuestLocked] = useState(false);
@@ -748,143 +743,6 @@ export default function HomePage() {
 
     setHeatmapSpots(createHeatmapSpots(overlaySeed, selectedMediaType));
   }, [result, selectedMediaType, selectedMediaUrl]);
-
-  useEffect(() => {
-    if (!result || !selectedMediaUrl || selectedMediaType !== "image") {
-      setComparisonSlider(54);
-      setIsComparisonAnimating(false);
-      return undefined;
-    }
-
-    setIsComparisonAnimating(true);
-    setComparisonSlider(72);
-
-    const firstTimer = window.setTimeout(() => {
-      setComparisonSlider(38);
-    }, 180);
-
-    const secondTimer = window.setTimeout(() => {
-      setComparisonSlider(54);
-    }, 1120);
-
-    const thirdTimer = window.setTimeout(() => {
-      setIsComparisonAnimating(false);
-    }, 1500);
-
-    return () => {
-      window.clearTimeout(firstTimer);
-      window.clearTimeout(secondTimer);
-      window.clearTimeout(thirdTimer);
-    };
-  }, [result, selectedMediaUrl]);
-
-  useEffect(() => {
-    if (!isComparisonDragging) {
-      return undefined;
-    }
-
-    const updateSlider = (clientX) => {
-      const bounds = comparisonRef.current?.getBoundingClientRect();
-
-      if (!bounds || bounds.width <= 0) {
-        return;
-      }
-
-      const nextValue = ((clientX - bounds.left) / bounds.width) * 100;
-      setComparisonSlider(Math.max(8, Math.min(92, nextValue)));
-    };
-
-    const handlePointerMove = (event) => {
-      updateSlider(event.clientX);
-    };
-
-    const handlePointerUp = () => {
-      setIsComparisonDragging(false);
-    };
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-    };
-  }, [isComparisonDragging]);
-
-  useEffect(() => {
-    if (selectedMediaType !== "video" || !selectedMediaUrl) {
-      return undefined;
-    }
-
-    const baseVideo = originalVideoRef.current;
-    const compareVideo = reconstructedVideoRef.current;
-
-    if (!baseVideo || !compareVideo) {
-      return undefined;
-    }
-
-    compareVideo.muted = true;
-    compareVideo.playsInline = true;
-    compareVideo.playbackRate = baseVideo.playbackRate;
-
-    const syncTime = () => {
-      if (Math.abs(compareVideo.currentTime - baseVideo.currentTime) > 0.08) {
-        compareVideo.currentTime = baseVideo.currentTime;
-      }
-    };
-
-    const syncPlay = () => {
-      syncTime();
-      compareVideo.play().catch(() => {});
-    };
-
-    const syncPause = () => {
-      syncTime();
-      compareVideo.pause();
-    };
-
-    const syncRate = () => {
-      compareVideo.playbackRate = baseVideo.playbackRate;
-    };
-
-    const syncLoaded = () => {
-      syncTime();
-    };
-
-    baseVideo.addEventListener("play", syncPlay);
-    baseVideo.addEventListener("pause", syncPause);
-    baseVideo.addEventListener("seeking", syncTime);
-    baseVideo.addEventListener("timeupdate", syncTime);
-    baseVideo.addEventListener("ratechange", syncRate);
-    baseVideo.addEventListener("loadedmetadata", syncLoaded);
-
-    syncLoaded();
-    syncRate();
-
-    return () => {
-      baseVideo.removeEventListener("play", syncPlay);
-      baseVideo.removeEventListener("pause", syncPause);
-      baseVideo.removeEventListener("seeking", syncTime);
-      baseVideo.removeEventListener("timeupdate", syncTime);
-      baseVideo.removeEventListener("ratechange", syncRate);
-      baseVideo.removeEventListener("loadedmetadata", syncLoaded);
-    };
-  }, [selectedMediaType, selectedMediaUrl, result]);
-
-  function handleComparisonPointerDown(event) {
-    event.preventDefault();
-    setIsComparisonAnimating(false);
-    setIsComparisonDragging(true);
-
-    const bounds = comparisonRef.current?.getBoundingClientRect();
-
-    if (!bounds || bounds.width <= 0) {
-      return;
-    }
-
-    const nextValue = ((event.clientX - bounds.left) / bounds.width) * 100;
-    setComparisonSlider(Math.max(8, Math.min(92, nextValue)));
-  }
 
   function incrementFreeUsageCount() {
     if (typeof window === "undefined") {
@@ -1270,11 +1128,6 @@ export default function HomePage() {
   }
 
   const activeResult = result ? { ...result, status: getResultLabel(result) } : null;
-
-  const shouldShowComparison =
-    Boolean(activeResult) &&
-    selectedMediaType === "image" &&
-    (activeResult.status === "Fake" || activeResult.status === "Suspicious");
   const analyzeDisabled = loading || cooldown > 0 || guestLocked;
   const analyzeLabel = loading
     ? "Analyzing..."
@@ -1446,109 +1299,7 @@ export default function HomePage() {
                   <div className="preview-wrapper">
                     <div className="preview-shell">
                       <div className="preview-frame">
-                        {shouldShowComparison ? (
-                          <div
-                            ref={comparisonRef}
-                            className={`comparison-container ${
-                              isComparisonAnimating ? "comparison-animating" : ""
-                            }`}
-                          >
-                            <div className="comparison-layer comparison-base">
-                              {selectedMediaType === "video" ? (
-                                <div className="preview-video-shell">
-                                  <video
-                                    ref={originalVideoRef}
-                                    className={`preview-video ${previewReady ? "is-ready" : ""}`}
-                                    src={selectedMediaUrl}
-                                    poster={selectedThumbnailUrl || undefined}
-                                    controls
-                                    playsInline
-                                    onLoadedData={() => setPreviewReady(true)}
-                                  />
-                                </div>
-                              ) : (
-                                <img
-                                  className={`preview-image ${previewReady ? "is-ready" : ""}`}
-                                  src={selectedMediaUrl}
-                                  alt="Selected media"
-                                  onLoad={() => setPreviewReady(true)}
-                                />
-                              )}
-                            </div>
-
-                            <div
-                              className="comparison-layer comparison-reconstructed"
-                              style={{ clipPath: `inset(0 0 0 ${comparisonSlider}%)` }}
-                            >
-                              <div className="reconstructed-shell">
-                                {selectedMediaType === "video" ? (
-                                  <div className="preview-video-shell reconstructed-video-shell">
-                                    <video
-                                      ref={reconstructedVideoRef}
-                                      className={`preview-video reconstructed-media ${
-                                        previewReady ? "is-ready" : ""
-                                      }`}
-                                      src={selectedMediaUrl}
-                                      poster={selectedThumbnailUrl || undefined}
-                                      playsInline
-                                      muted
-                                      aria-hidden="true"
-                                    />
-                                  </div>
-                                ) : (
-                                  <img
-                                    className={`preview-image reconstructed-media ${
-                                      previewReady ? "is-ready" : ""
-                                    }`}
-                                    src={selectedMediaUrl}
-                                    alt=""
-                                    aria-hidden="true"
-                                  />
-                                )}
-                                <div className="grain-overlay" aria-hidden="true" />
-                              </div>
-                            </div>
-
-                            <div className="comparison-label comparison-label-left">
-                              Analyzed Input
-                            </div>
-                            <div className="comparison-label comparison-label-right">
-                              Predicted Real Form
-                            </div>
-
-                            <button
-                              type="button"
-                              className="comparison-slider"
-                              style={{ left: `${comparisonSlider}%` }}
-                              aria-label="Adjust comparison slider"
-                              onPointerDown={handleComparisonPointerDown}
-                            >
-                              <span className="comparison-slider-line" />
-                              <span className="comparison-slider-thumb">
-                                <span />
-                              </span>
-                            </button>
-
-                            {showHeatmapOverlay && heatmapSpots.length > 0 ? (
-                              <div className="heatmap" aria-hidden="true">
-                                {heatmapSpots.map((spot) => (
-                                  <span
-                                    key={spot.id}
-                                    className="spot"
-                                    style={{
-                                      left: `${spot.x}%`,
-                                      top: `${spot.y}%`,
-                                      width: `${spot.size}px`,
-                                      height: `${spot.size}px`,
-                                      animationDelay: `${spot.delay}s`,
-                                      animationDuration: `${spot.duration}s`,
-                                    }}
-                                  />
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : selectedMediaType === "video" ? (
+                        {selectedMediaType === "video" ? (
                           <div className="preview-video-shell">
                             <video
                               ref={originalVideoRef}
@@ -1568,6 +1319,25 @@ export default function HomePage() {
                             onLoad={() => setPreviewReady(true)}
                           />
                         )}
+
+                        {showHeatmapOverlay && heatmapSpots.length > 0 && activeResult ? (
+                          <div className="heatmap" aria-hidden="true">
+                            {heatmapSpots.map((spot) => (
+                              <span
+                                key={spot.id}
+                                className="spot"
+                                style={{
+                                  left: `${spot.x}%`,
+                                  top: `${spot.y}%`,
+                                  width: `${spot.size}px`,
+                                  height: `${spot.size}px`,
+                                  animationDelay: `${spot.delay}s`,
+                                  animationDuration: `${spot.duration}s`,
+                                }}
+                              />
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -1599,13 +1369,6 @@ export default function HomePage() {
 
                 {!user ? (
                   <p className="free-scan-text">1 free scan available without login</p>
-                ) : null}
-
-                {shouldShowComparison ? (
-                  <p className="reconstruction-warning">
-                    Warning: Predicted image may not be fully accurate. Generated for visual
-                    understanding only.
-                  </p>
                 ) : null}
 
                 {selectedMediaUrl && activeResult ? (
@@ -1659,6 +1422,7 @@ export default function HomePage() {
                 <div className="result-card">
                   <div className="result-content">
                     <div className="result-header">
+                      <p className="eyebrow">AI Analysis Result</p>
                       <span className={`status-badge ${activeResult.status.toLowerCase()}`}>
                         {activeResult.status}
                       </span>
@@ -2194,148 +1958,6 @@ export default function HomePage() {
           overflow: hidden;
         }
 
-        .comparison-container {
-          position: relative;
-          width: 100%;
-          height: 100%;
-          overflow: hidden;
-          border-radius: 16px;
-        }
-
-        .comparison-layer {
-          position: absolute;
-          inset: 0;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .comparison-base {
-          z-index: 1;
-        }
-
-        .comparison-reconstructed {
-          z-index: 2;
-          pointer-events: none;
-        }
-
-        .comparison-animating .comparison-layer,
-        .comparison-animating .comparison-slider {
-          transition:
-            clip-path 0.5s ease,
-            left 0.5s ease;
-        }
-
-        .reconstructed-shell {
-          position: relative;
-          width: 100%;
-          height: 100%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .reconstructed-media {
-          filter: contrast(1.1) brightness(1.05) saturate(0.9);
-        }
-
-        .reconstructed-video-shell,
-        .reconstructed-video-shell .preview-video {
-          pointer-events: none;
-        }
-
-        .grain-overlay {
-          position: absolute;
-          inset: 0;
-          border-radius: 16px;
-          opacity: 0.18;
-          mix-blend-mode: soft-light;
-          background-image:
-            radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.18), transparent 28%),
-            radial-gradient(circle at 70% 65%, rgba(255, 255, 255, 0.14), transparent 24%),
-            repeating-linear-gradient(
-              0deg,
-              rgba(255, 255, 255, 0.08) 0,
-              rgba(255, 255, 255, 0.08) 1px,
-              transparent 1px,
-              transparent 3px
-            );
-        }
-
-        .comparison-label {
-          position: absolute;
-          top: 14px;
-          z-index: 4;
-          padding: 7px 10px;
-          border-radius: 999px;
-          background: rgba(5, 9, 16, 0.68);
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          font-size: 11px;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          color: #e2e8f0;
-          backdrop-filter: blur(10px);
-          -webkit-backdrop-filter: blur(10px);
-        }
-
-        .comparison-label-left {
-          left: 14px;
-        }
-
-        .comparison-label-right {
-          right: 14px;
-        }
-
-        .comparison-slider {
-          position: absolute;
-          top: 0;
-          bottom: 0;
-          z-index: 5;
-          width: 44px;
-          transform: translateX(-50%);
-          border: 0;
-          padding: 0;
-          background: transparent;
-          cursor: ew-resize;
-          touch-action: none;
-        }
-
-        .comparison-slider-line {
-          position: absolute;
-          top: 0;
-          bottom: 0;
-          left: 50%;
-          width: 2px;
-          transform: translateX(-50%);
-          background: linear-gradient(180deg, rgba(255, 255, 255, 0.2), white, rgba(255, 255, 255, 0.2));
-          box-shadow: 0 0 24px rgba(255, 255, 255, 0.25);
-        }
-
-        .comparison-slider-thumb {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          width: 34px;
-          height: 34px;
-          transform: translate(-50%, -50%);
-          border-radius: 999px;
-          background: rgba(6, 10, 18, 0.85);
-          border: 1px solid rgba(255, 255, 255, 0.2);
-          box-shadow:
-            0 10px 30px rgba(0, 0, 0, 0.35),
-            0 0 0 6px rgba(255, 255, 255, 0.06);
-          display: grid;
-          place-items: center;
-        }
-
-        .comparison-slider-thumb span {
-          width: 12px;
-          height: 12px;
-          border-left: 2px solid rgba(255, 255, 255, 0.92);
-          border-right: 2px solid rgba(255, 255, 255, 0.92);
-          opacity: 0.92;
-        }
-
         .heatmap {
           position: absolute;
           inset: 14px;
@@ -2416,17 +2038,6 @@ export default function HomePage() {
           margin: 12px 0 0;
           font-size: 12px;
           color: #a1a1b3;
-        }
-
-        .reconstruction-warning {
-          margin: 12px 0 0;
-          padding: 12px 14px;
-          border-radius: 12px;
-          background: rgba(250, 173, 20, 0.1);
-          border: 1px solid rgba(250, 173, 20, 0.28);
-          color: #fde3a7;
-          line-height: 1.5;
-          animation: fadeIn 0.3s ease;
         }
 
         .overlay-toggle {

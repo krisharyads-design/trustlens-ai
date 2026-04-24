@@ -35,6 +35,8 @@ const ANALYSIS_SCHEMA = {
 function buildImagePrompt() {
   return [
     "Analyze the given image and determine if it is AI-generated or real.",
+    "Carefully inspect for obvious visual manipulations such as glowing eyes or laser effects, unnatural lighting, added visual effects, overlays, or edits.",
+    "You MUST explicitly mention these if present.",
     "",
     "Check for:",
     "* unnatural skin texture or overly smooth areas",
@@ -59,6 +61,8 @@ function buildImagePrompt() {
 function buildVideoPrompt(frameLabel = "") {
   return [
     "Analyze this video frame and determine if the human face shown looks AI-generated or real.",
+    "Carefully inspect for obvious visual manipulations such as glowing eyes or laser effects, unnatural lighting, added visual effects, overlays, or edits.",
+    "You MUST explicitly mention these if present.",
     frameLabel ? `Frame context: ${frameLabel}` : "",
     "",
     "Check for:",
@@ -107,7 +111,7 @@ function parseGeminiJson(text) {
 function normalizeResult(result) {
   const allowedStatuses = ["Fake", "Suspicious", "Real"];
   const status = allowedStatuses.includes(result?.status) ? result.status : "Suspicious";
-  const trustScore = Math.max(0, Math.min(100, Number(result?.trustScore) || 50));
+  const trustScore = coerceTrustScoreByStatus(status, result?.trustScore);
   const extra = { ...result };
 
   delete extra.status;
@@ -122,6 +126,20 @@ function normalizeResult(result) {
     context: result?.context || "This result is an AI estimate and should be verified.",
     ...extra,
   };
+}
+
+function coerceTrustScoreByStatus(status, score) {
+  const safeScore = Math.max(0, Math.min(100, Number(score) || 50));
+
+  if (status === "Fake") {
+    return Math.max(0, Math.min(40, safeScore));
+  }
+
+  if (status === "Suspicious") {
+    return Math.max(40, Math.min(70, safeScore));
+  }
+
+  return Math.max(70, Math.min(100, safeScore));
 }
 
 function shouldForceFake(...values) {
@@ -145,16 +163,54 @@ function sanitizeDisplayText(value = "") {
     .trim();
 }
 
+function detectVisualAnomalies(reasoning = "") {
+  const normalized = String(reasoning || "").toLowerCase();
+
+  return {
+    laserEyes:
+      normalized.includes("laser") ||
+      normalized.includes("glowing eyes") ||
+      normalized.includes("glow eye"),
+    overlay:
+      normalized.includes("overlay") ||
+      normalized.includes("effect") ||
+      normalized.includes("visual effect"),
+    manipulated:
+      normalized.includes("manipulated") ||
+      normalized.includes("edited") ||
+      normalized.includes("unnatural lighting"),
+  };
+}
+
 function toReasonBullets(reasoning = "", fallbackVerdict = "Fake") {
   const cleaned = sanitizeDisplayText(reasoning);
+  const anomalies = detectVisualAnomalies(reasoning);
 
   const parts = cleaned
     .split(/[\.\;\n]+/)
     .map((part) => part.trim())
     .filter(Boolean);
 
-  if (parts.length > 0) {
-    return parts.slice(0, 4).map((part) => `• ${part}`).join("\n");
+  const prioritized = [];
+
+  if (anomalies.laserEyes) {
+    prioritized.push("Artificial laser eye effect detected (non-natural light source)");
+  } else if (anomalies.overlay) {
+    prioritized.push("Artificial visual effect or overlay detected");
+  } else if (anomalies.manipulated) {
+    prioritized.push("Edited or manipulated visual content detected");
+  }
+
+  const mergedParts = [...prioritized];
+
+  for (const part of parts) {
+    if (!mergedParts.some((existing) => existing.toLowerCase() === part.toLowerCase())) {
+      mergedParts.push(part);
+    }
+  }
+
+  if (mergedParts.length > 0) {
+    return mergedParts.slice(0, 4).map((part) => `• ${part}`).join("\n");
   }
 
   return fallbackVerdict === "Real"
@@ -190,14 +246,15 @@ function toUiResult(frameResult, extra = {}) {
   const forceFake = shouldForceFake(frameResult.verdict, frameResult.reasoning, extra?.context);
   const baseScore =
     frameResult.verdict === "Real" ? frameResult.confidence : Math.max(0, 100 - frameResult.confidence);
-  const trustScore = Math.max(0, Math.min(100, baseScore));
+  const rawTrustScore = Math.max(0, Math.min(100, baseScore));
   const status = forceFake
     ? "Fake"
-    : trustScore <= 45
+    : rawTrustScore <= 45
       ? "Fake"
-      : trustScore <= 85
+      : rawTrustScore <= 85
         ? "Suspicious"
         : "Real";
+  const trustScore = coerceTrustScoreByStatus(status, rawTrustScore);
 
   return normalizeResult({
     status,

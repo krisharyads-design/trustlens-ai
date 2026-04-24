@@ -1441,7 +1441,17 @@ export default function HomePage() {
                       </span>
                     </div>
 
-                    <TrustMeter score={activeResult.trustScore} />
+                    <div className="confidence-container">
+                      <div className="confidence-label">
+                        Confidence: {activeResult.trustScore}%
+                      </div>
+                      <div className="confidence-bar">
+                        <div
+                          className={`confidence-fill ${activeResult.status.toLowerCase()}`}
+                          style={{ width: `${activeResult.trustScore}%` }}
+                        />
+                      </div>
+                    </div>
 
                     <div className="result-block">
                       <p className="eyebrow">Reason</p>
@@ -1451,6 +1461,10 @@ export default function HomePage() {
                     <div className="result-block">
                       <p className="eyebrow">Context</p>
                       <p>{renderHighlightedText(activeResult.context)}</p>
+                    </div>
+
+                    <div className="disclaimer">
+                      Warning: This analysis is AI-based and may not be 100% accurate.
                     </div>
                   </div>
                 </div>
@@ -2190,6 +2204,42 @@ export default function HomePage() {
           animation: fadeIn 0.3s ease;
         }
 
+        .confidence-container {
+          margin-top: 10px;
+        }
+
+        .confidence-label {
+          font-size: 14px;
+          margin-bottom: 4px;
+          color: rgba(255, 255, 255, 0.8);
+        }
+
+        .confidence-bar {
+          width: 100%;
+          height: 8px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 6px;
+          overflow: hidden;
+        }
+
+        .confidence-fill {
+          height: 100%;
+          border-radius: 6px;
+          transition: width 0.5s ease;
+        }
+
+        .confidence-fill.fake {
+          background: #ef4444;
+        }
+
+        .confidence-fill.suspicious {
+          background: #facc15;
+        }
+
+        .confidence-fill.real {
+          background: #22c55e;
+        }
+
         .main-preview {
           width: 100%;
           max-width: 500px;
@@ -2305,6 +2355,13 @@ export default function HomePage() {
 
         .reason-list li {
           line-height: 1.55;
+        }
+
+        .disclaimer {
+          margin-top: 12px;
+          font-size: 12px;
+          color: rgba(255, 255, 255, 0.5);
+          text-align: center;
         }
 
         .empty-state {

@@ -29,14 +29,9 @@ const MAX_VIDEO_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_ANALYZE_VIDEO_FRAMES = 3;
 const LOCAL_VIDEO_PREFIX = "local-video://";
 const FREE_USAGE_STORAGE_KEY = "free_usage_count";
-const FALLBACK_RESULT = {
-  status: "Suspicious",
-  trustScore: 60,
-  reason: "High demand detected, estimated result shown",
-  context: "High demand detected. Showing estimated result.",
-  isEstimated: true,
-};
 const LOADING_PHASES = ["Analyzing...", "Detecting patterns...", "Finalizing result..."];
+const ANALYSIS_RETRY_COUNT = 3;
+const ANALYSIS_RETRY_DELAY_MS = 1000;
 
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -338,18 +333,39 @@ function formatHistoryTimestamp(value) {
   }
 }
 
-function getStatusFromScore(score) {
-  const safeScore = Math.max(0, Math.min(100, Number(score) || 0));
+function getResultLabel(item) {
+  const status = String(item?.status || "");
 
-  if (safeScore > 85) {
-    return "Real";
+  if (status === "Real" || status === "Suspicious" || status === "Fake") {
+    return status;
   }
 
-  if (safeScore >= 50) {
+  const safeScore = Math.max(0, Math.min(100, Number(item?.trustScore) || 0));
+
+  if (safeScore <= 45) {
+    return "Fake";
+  }
+
+  if (safeScore <= 85) {
     return "Suspicious";
   }
 
-  return "Fake";
+  return "Real";
+}
+
+function renderReasonBullets(text) {
+  const lines = String(text || "")
+    .split("\n")
+    .map((line) => line.replace(/^•\s*/, "").trim())
+    .filter(Boolean);
+
+  return (
+    <ul className="reason-list">
+      {lines.map((line, index) => (
+        <li key={`${line}-${index}`}>{renderHighlightedText(line)}</li>
+      ))}
+    </ul>
+  );
 }
 
 function TrustMeter({ score = 0 }) {
@@ -374,11 +390,7 @@ function getUserHistoryCollection(uid) {
 
 function isRetriableAnalysisError(message) {
   const normalized = String(message || "").toLowerCase();
-  return (
-    normalized.includes("quota") ||
-    normalized.includes("busy") ||
-    normalized.includes("high demand")
-  );
+  return normalized.includes("quota") || normalized.includes("busy") || normalized.includes("timeout");
 }
 
 function isInvalidStoredMedia(value, mediaType = "image") {
@@ -1107,18 +1119,26 @@ export default function HomePage() {
     return data;
   }
 
-  async function analyzeWithRetry(payload, retries = 2) {
-    try {
-      return await requestAnalysis(payload);
-    } catch (error) {
-      if (retries > 0 && isRetriableAnalysisError(error?.message)) {
-        setBusyMessage("High demand detected. Retrying automatically...");
-        await delay(RETRY_DELAY_MS);
-        return analyzeWithRetry(payload, retries - 1);
-      }
+  async function analyzeWithRetry(payload) {
+    let lastError = null;
 
-      throw error;
+    for (let attempt = 0; attempt < ANALYSIS_RETRY_COUNT; attempt += 1) {
+      try {
+        return await requestAnalysis(payload);
+      } catch (error) {
+        lastError = error;
+
+        if (attempt < ANALYSIS_RETRY_COUNT - 1 && isRetriableAnalysisError(error?.message)) {
+          setBusyMessage("Retrying analysis...");
+          await delay(ANALYSIS_RETRY_DELAY_MS);
+          continue;
+        }
+
+        break;
+      }
     }
+
+    throw lastError || new Error("Analysis failed.");
   }
 
   function resolveHistoryMedia(item) {
@@ -1173,7 +1193,7 @@ export default function HomePage() {
     analyzeInFlightRef.current = true;
     setLoading(true);
     setError("");
-    setBusyMessage("Analyzing... this may take a few seconds");
+    setBusyMessage("");
     setResult(null);
 
     try {
@@ -1184,18 +1204,7 @@ export default function HomePage() {
         data = lastAnalysisCacheRef.current.data;
       } else {
         const payload = await createAnalyzePayload(selectedFile);
-
-        try {
-          data = await analyzeWithRetry(payload);
-        } catch (err) {
-          if (isRetriableAnalysisError(err?.message)) {
-            data = FALLBACK_RESULT;
-            setBusyMessage("High demand detected. Showing estimated result.");
-          } else {
-            throw err;
-          }
-        }
-
+        data = await analyzeWithRetry(payload);
         lastAnalysisCacheRef.current = { key: cacheKey, data };
       }
 
@@ -1230,7 +1239,7 @@ export default function HomePage() {
         }
       }, 100);
     } catch (err) {
-      setError(err.message || "Something went wrong.");
+      setError("Analysis could not be completed. Please try again.");
     } finally {
       analyzeInFlightRef.current = false;
       setLoading(false);
@@ -1244,7 +1253,7 @@ export default function HomePage() {
     setSelectedFile(null);
     setSelectedHistoryId(item.id);
     setResult(item);
-    setBusyMessage(item.isEstimated ? "High demand detected. Showing estimated result." : "");
+    setBusyMessage("");
     setSelectedMediaType(media.mediaType);
     setSelectedMediaUrl(media.mediaUrl);
     setSelectedThumbnailUrl(media.thumbnailUrl);
@@ -1260,18 +1269,12 @@ export default function HomePage() {
     }
   }
 
-  const activeResult = result
-    ? { ...result, status: getStatusFromScore(result.trustScore) }
-    : null;
+  const activeResult = result ? { ...result, status: getResultLabel(result) } : null;
 
   const shouldShowComparison =
     Boolean(activeResult) &&
     selectedMediaType === "image" &&
-    activeResult.status !== "Real";
-  const shouldShowAuthenticMessage =
-    Boolean(activeResult) &&
-    selectedMediaType === "image" &&
-    activeResult.status === "Real";
+    (activeResult.status === "Fake" || activeResult.status === "Suspicious");
   const analyzeDisabled = loading || cooldown > 0 || guestLocked;
   const analyzeLabel = loading
     ? "Analyzing..."
@@ -1308,7 +1311,7 @@ export default function HomePage() {
                   history.length > 0 ? (
                     <div className="history-list">
                       {history.map((item) => {
-                        const itemStatus = getStatusFromScore(item.trustScore);
+                        const itemStatus = getResultLabel(item);
                         const itemTimestamp = formatHistoryTimestamp(item.createdAt || item.timestamp);
                         const historyThumbnail =
                           item.thumbnailUrl || (item.mediaType === "image" ? item.mediaUrl : "");
@@ -1594,11 +1597,14 @@ export default function HomePage() {
                   </button>
                 </div>
 
-                <p className="free-scan-text">1 free scan available without login</p>
+                {!user ? (
+                  <p className="free-scan-text">1 free scan available without login</p>
+                ) : null}
 
-                {shouldShowAuthenticMessage ? (
-                  <p className="authentic-message">
-                    This image appears authentic. No reconstruction needed.
+                {shouldShowComparison ? (
+                  <p className="reconstruction-warning">
+                    Warning: Predicted image may not be fully accurate. Generated for visual
+                    understanding only.
                   </p>
                 ) : null}
 
@@ -1653,10 +1659,6 @@ export default function HomePage() {
                 <div className="result-card">
                   <div className="result-content">
                     <div className="result-header">
-                      <div>
-                        <p className="eyebrow">Latest result</p>
-                        <h2>{activeResult.fileName || "Selected Result"}</h2>
-                      </div>
                       <span className={`status-badge ${activeResult.status.toLowerCase()}`}>
                         {activeResult.status}
                       </span>
@@ -1664,15 +1666,9 @@ export default function HomePage() {
 
                     <TrustMeter score={activeResult.trustScore} />
 
-                    {activeResult.isEstimated ? (
-                      <p className="busy-message">
-                        {busyMessage || "High demand detected. Showing estimated result."}
-                      </p>
-                    ) : null}
-
                     <div className="result-block">
                       <p className="eyebrow">Reason</p>
-                      <p>{renderHighlightedText(activeResult.reason)}</p>
+                      {renderReasonBullets(activeResult.reason)}
                     </div>
 
                     <div className="result-block">
@@ -1704,10 +1700,10 @@ export default function HomePage() {
             aria-labelledby="unlock-modal-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <p className="eyebrow">Upgrade Required</p>
-            <h2 id="unlock-modal-title">Unlock Full Access</h2>
+            <p className="eyebrow">Access</p>
+            <h2 id="unlock-modal-title">Continue Analysis</h2>
             <p className="subtext">
-              You&apos;ve used your 1 free analysis. Login to continue.
+              Login to continue analysis
             </p>
             <div className="unlock-actions">
               <button
@@ -2240,7 +2236,7 @@ export default function HomePage() {
         }
 
         .reconstructed-media {
-          filter: contrast(1.1) saturate(0.9) brightness(1.04);
+          filter: contrast(1.1) brightness(1.05) saturate(0.9);
         }
 
         .reconstructed-video-shell,
@@ -2367,7 +2363,7 @@ export default function HomePage() {
           object-fit: contain;
           object-position: center center;
           display: block;
-          border-radius: 16px;
+          border-radius: 12px;
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
           opacity: 0;
           transform: scale(0.985);
@@ -2380,7 +2376,7 @@ export default function HomePage() {
           width: 100%;
           height: 100%;
           max-width: 100%;
-          border-radius: 16px;
+          border-radius: 12px;
           overflow: hidden;
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
         }
@@ -2392,7 +2388,7 @@ export default function HomePage() {
           max-width: 100%;
           max-height: 100%;
           background: #050608;
-          border-radius: 16px;
+          border-radius: 12px;
           object-fit: contain;
           object-position: center center;
           opacity: 0;
@@ -2422,13 +2418,13 @@ export default function HomePage() {
           color: #a1a1b3;
         }
 
-        .authentic-message {
+        .reconstruction-warning {
           margin: 12px 0 0;
           padding: 12px 14px;
           border-radius: 12px;
-          background: rgba(34, 197, 94, 0.1);
-          border: 1px solid rgba(34, 197, 94, 0.24);
-          color: #bbf7d0;
+          background: rgba(250, 173, 20, 0.1);
+          border: 1px solid rgba(250, 173, 20, 0.28);
+          color: #fde3a7;
           line-height: 1.5;
           animation: fadeIn 0.3s ease;
         }
@@ -2589,21 +2585,21 @@ export default function HomePage() {
         }
 
         .status-badge.real {
-          background: rgba(34, 197, 94, 0.12);
-          color: #86efac;
-          border-color: rgba(34, 197, 94, 0.24);
+          background: rgba(82, 196, 26, 0.14);
+          color: #95de64;
+          border-color: rgba(82, 196, 26, 0.32);
         }
 
         .status-badge.suspicious {
-          background: rgba(245, 158, 11, 0.12);
-          color: #fcd34d;
-          border-color: rgba(245, 158, 11, 0.24);
+          background: rgba(250, 173, 20, 0.14);
+          color: #ffd666;
+          border-color: rgba(250, 173, 20, 0.32);
         }
 
         .status-badge.fake {
-          background: rgba(239, 68, 68, 0.12);
-          color: #fca5a5;
-          border-color: rgba(239, 68, 68, 0.24);
+          background: rgba(255, 77, 79, 0.14);
+          color: #ff9c9e;
+          border-color: rgba(255, 77, 79, 0.32);
         }
 
         .keyword-real {
@@ -2655,6 +2651,18 @@ export default function HomePage() {
           gap: 8px;
           padding-top: 16px;
           border-top: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .reason-list {
+          margin: 0;
+          padding-left: 18px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .reason-list li {
+          line-height: 1.55;
         }
 
         .empty-state {

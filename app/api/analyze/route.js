@@ -3,6 +3,17 @@ import { NextResponse } from "next/server";
 const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 const MAX_VIDEO_FRAMES = 10;
+const FAKE_OVERRIDE_TERMS = [
+  "ai-generated",
+  "synthetic",
+  "generated",
+  "artificial",
+  "edited",
+  "effect",
+  "laser",
+  "overlay",
+  "manipulated",
+];
 
 const ANALYSIS_SCHEMA = {
   type: "object",
@@ -33,6 +44,7 @@ function buildImagePrompt() {
     "* artifacts around hair edges or background blending",
     "* distorted ears, teeth, or fine details",
     "* overly perfect symmetry",
+    "* edited effects, overlays, or obvious visual manipulation",
     "",
     "Provide:",
     "1. Final verdict (Real / AI Generated)",
@@ -57,6 +69,7 @@ function buildVideoPrompt(frameLabel = "") {
     "* artifacts around hair edges or background blending",
     "* distorted ears, teeth, or fine details",
     "* overly perfect symmetry",
+    "* edited effects, overlays, or obvious visual manipulation",
     "",
     "Provide:",
     "1. Final verdict (Real / AI Generated)",
@@ -92,7 +105,7 @@ function parseGeminiJson(text) {
 }
 
 function normalizeResult(result) {
-  const allowedStatuses = ["Real", "Fake", "Suspicious"];
+  const allowedStatuses = ["Fake", "Suspicious", "Real"];
   const status = allowedStatuses.includes(result?.status) ? result.status : "Suspicious";
   const trustScore = Math.max(0, Math.min(100, Number(result?.trustScore) || 50));
   const extra = { ...result };
@@ -111,6 +124,56 @@ function normalizeResult(result) {
   };
 }
 
+function shouldForceFake(...values) {
+  const combined = values
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return FAKE_OVERRIDE_TERMS.some((term) => combined.includes(term));
+}
+
+function sanitizeDisplayText(value = "") {
+  return String(value || "")
+    .replace(/ai-generated/gi, "fake")
+    .replace(/artificial/gi, "fake")
+    .replace(/synthetic/gi, "fake")
+    .replace(/generated/gi, "fake")
+    .replace(/manipulated/gi, "fake")
+    .replace(/edited/gi, "fake")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function toReasonBullets(reasoning = "", fallbackVerdict = "Fake") {
+  const cleaned = sanitizeDisplayText(reasoning);
+
+  const parts = cleaned
+    .split(/[\.\;\n]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length > 0) {
+    return parts.slice(0, 4).map((part) => `• ${part}`).join("\n");
+  }
+
+  return fallbackVerdict === "Real"
+    ? "• Natural lighting and detail consistency\n• No strong signs of digital manipulation"
+    : "• Synthetic or edited visual cues detected\n• Output appears manipulated or artificially generated";
+}
+
+function toShortContext(reasoning = "", status = "Fake") {
+  const cleaned = sanitizeDisplayText(reasoning);
+
+  if (cleaned) {
+    return cleaned.slice(0, 220);
+  }
+
+  return status === "Real"
+    ? "The content appears natural and visually consistent."
+    : "The content shows signs of artificial generation or visible manipulation.";
+}
+
 function normalizeFrameResult(result) {
   const verdict = result?.verdict === "Real" ? "Real" : "AI Generated";
   const confidence = Math.max(0, Math.min(100, Number(result?.confidence) || 50));
@@ -124,21 +187,23 @@ function normalizeFrameResult(result) {
 }
 
 function toUiResult(frameResult, extra = {}) {
-  const trustScore =
-    frameResult.verdict === "Real" ? frameResult.confidence : 100 - frameResult.confidence;
+  const forceFake = shouldForceFake(frameResult.verdict, frameResult.reasoning, extra?.context);
+  const baseScore =
+    frameResult.verdict === "Real" ? frameResult.confidence : Math.max(0, 100 - frameResult.confidence);
+  const trustScore = Math.max(0, Math.min(100, baseScore));
+  const status = forceFake
+    ? "Fake"
+    : trustScore <= 45
+      ? "Fake"
+      : trustScore <= 85
+        ? "Suspicious"
+        : "Real";
 
   return normalizeResult({
-    status:
-      frameResult.verdict === "Real"
-        ? trustScore >= 85
-          ? "Real"
-          : "Suspicious"
-        : trustScore < 50
-          ? "Fake"
-          : "Suspicious",
+    status,
     trustScore,
-    reason: `${frameResult.verdict} (${frameResult.confidence}% confidence)`,
-    context: frameResult.reasoning,
+    reason: toReasonBullets(frameResult.reasoning, status),
+    context: toShortContext(frameResult.reasoning, status),
     ...extra,
   });
 }
@@ -240,28 +305,28 @@ async function analyzeVideoFrames(apiKey, frames = []) {
     .map(
       (item, index) =>
         `Frame ${index + 1}${item.timestamp !== undefined ? ` (${item.timestamp}s)` : ""}: ${
-          item.verdict
+          item.verdict === "Real" ? "Real" : "Fake"
         } at ${item.confidence}%`
     )
     .join("; ");
-
-  if (majorityVerdict === "Suspicious") {
-    return normalizeResult({
-      status: "Suspicious",
-      trustScore: 50,
-      reason: "Mixed frame results across the video",
-      context: `The sampled frames were split between Real and AI Generated. ${frameSummary}`,
-      frameSummaries: frameResults,
-      frameCount: frameResults.length,
-      analysisMode: "video",
-      verdict: "Mixed",
-    });
-  }
 
   const reasoningSummary = majorityFrames
     .slice(0, 3)
     .map((item) => item.reasoning)
     .join(" ");
+
+  if (majorityVerdict === "Suspicious") {
+    return normalizeResult({
+      status: "Suspicious",
+      trustScore: 50,
+      reason: toReasonBullets("Mixed frame results across the video. Some frames appear natural while others show possible manipulation.", "Suspicious"),
+      context: toShortContext(`The sampled frames were mixed. ${frameSummary}`, "Suspicious"),
+      frameSummaries: frameResults,
+      frameCount: frameResults.length,
+      analysisMode: "video",
+      verdict: "Suspicious",
+    });
+  }
 
   return {
     ...toUiResult(
@@ -274,7 +339,7 @@ async function analyzeVideoFrames(apiKey, frames = []) {
         frameSummaries: frameResults,
         frameCount: frameResults.length,
         analysisMode: "video",
-        verdict: majorityVerdict,
+        verdict: majorityVerdict === "Real" ? "Real" : "Suspicious",
       }
     ),
   };

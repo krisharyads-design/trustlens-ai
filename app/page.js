@@ -974,6 +974,10 @@ export default function HomePage() {
       throw new Error(data.error || "Analysis failed.");
     }
 
+    if (!data || Object.keys(data).length === 0) {
+      throw new Error("Empty analysis response.");
+    }
+
     return data;
   }
 
@@ -982,11 +986,18 @@ export default function HomePage() {
 
     for (let attempt = 0; attempt < ANALYSIS_RETRY_COUNT; attempt += 1) {
       try {
-        return await requestAnalysis(payload);
+        const data = await requestAnalysis(payload);
+
+        if (!data || Object.keys(data).length === 0) {
+          throw new Error("Empty analysis response.");
+        }
+
+        return data;
       } catch (error) {
         lastError = error;
+        console.log("API error:", error);
 
-        if (attempt < ANALYSIS_RETRY_COUNT - 1 && isRetriableAnalysisError(error?.message)) {
+        if (attempt < ANALYSIS_RETRY_COUNT - 1) {
           setBusyMessage("Retrying analysis...");
           await delay(ANALYSIS_RETRY_DELAY_MS);
           continue;
@@ -1097,7 +1108,7 @@ export default function HomePage() {
         }
       }, 100);
     } catch (err) {
-      setError("Analysis could not be completed. Please try again.");
+      setError("Analysis failed. Please try again.");
     } finally {
       analyzeInFlightRef.current = false;
       setLoading(false);
@@ -1409,7 +1420,9 @@ export default function HomePage() {
             <div className="panel glass-card result-panel">
               {loading ? (
                 <div className="loading-state">
-                  <span className="spinner large" />
+                  <div className="loader" aria-hidden="true">
+                    <span className="circle" />
+                  </div>
                   <div>
                     <p className="eyebrow">Processing</p>
                     <h2>{LOADING_PHASES[loadingPhaseIndex]}</h2>
@@ -2125,6 +2138,24 @@ export default function HomePage() {
           animation: fadeIn 0.3s ease;
         }
 
+        .loader {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 72px;
+          animation: float 3s ease-in-out infinite;
+        }
+
+        .circle {
+          width: 60px;
+          height: 60px;
+          border-radius: 50%;
+          border: 3px solid rgba(255, 255, 255, 0.2);
+          border-top: 3px solid #8b5cf6;
+          box-shadow: 0 0 20px rgba(139, 92, 246, 0.5);
+          animation: spin 1s linear infinite;
+        }
+
         .spinner {
           width: 16px;
           height: 16px;
@@ -2366,8 +2397,26 @@ export default function HomePage() {
         }
 
         @keyframes spin {
-          to {
+          0% {
+            transform: rotate(0deg);
+          }
+
+          100% {
             transform: rotate(360deg);
+          }
+        }
+
+        @keyframes float {
+          0% {
+            transform: translateY(0px);
+          }
+
+          50% {
+            transform: translateY(-10px);
+          }
+
+          100% {
+            transform: translateY(0px);
           }
         }
 

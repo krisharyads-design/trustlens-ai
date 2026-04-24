@@ -2369,16 +2369,6 @@ export default function HomePage() {
           font-size: 14px;
         }
 
-        .busy-message {
-          padding: 12px 14px;
-          border-radius: 12px;
-          background: rgba(245, 158, 11, 0.12);
-          border: 1px solid rgba(245, 158, 11, 0.24);
-          color: #fcd34d;
-          font-size: 14px;
-          line-height: 1.5;
-        }
-
         h1,
         h2,
         p {

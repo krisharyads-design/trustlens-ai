@@ -786,7 +786,7 @@ export default function HomePage() {
     setBusyMessage("");
   }
 
-  function handleNewSession() {
+  function handleNewChat() {
     setSelectedFile(null);
     setSelectedMediaUrl("");
     setSelectedMediaType("image");
@@ -1155,11 +1155,16 @@ export default function HomePage() {
         <aside className="sidebar">
           <div className="sidebar-content">
             <div className="sidebar-top">
-              <div className="brand">
+              <button
+                type="button"
+                className="brand brand-button"
+                onClick={handleNewChat}
+                aria-label="Start a new chat"
+              >
                 <div className="brand-mark">TL</div>
                 <span className="brand-name">TrustLens AI</span>
-              </div>
-              <button className="new-btn" type="button" onClick={handleNewSession}>
+              </button>
+              <button className="new-btn" type="button" onClick={handleNewChat}>
                 <span aria-hidden="true">+</span>
                 <span>New</span>
               </button>
@@ -1596,6 +1601,29 @@ export default function HomePage() {
           display: flex;
           align-items: center;
           gap: 10px;
+        }
+
+        .brand-button {
+          width: fit-content;
+          padding: 0;
+          border: 0;
+          background: transparent;
+          color: inherit;
+          cursor: pointer;
+          transition:
+            opacity 0.2s ease,
+            transform 0.2s ease;
+        }
+
+        .brand-button:hover {
+          opacity: 0.8;
+          transform: scale(1.02);
+        }
+
+        .brand-button:focus-visible {
+          outline: 2px solid rgba(96, 165, 250, 0.9);
+          outline-offset: 4px;
+          border-radius: 10px;
         }
 
         .brand-mark {

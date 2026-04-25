@@ -14,6 +14,27 @@ const FAKE_OVERRIDE_TERMS = [
   "overlay",
   "manipulated",
 ];
+const SCREENSHOT_INDICATOR_TERMS = [
+  "screenshot",
+  "screen capture",
+  "digital interface",
+  "user interface",
+  "ui elements",
+  "browser bar",
+  "browser window",
+  "address bar",
+  "toolbar",
+  "app layout",
+  "application interface",
+  "web page",
+  "website layout",
+  "buttons",
+  "menus",
+  "text blocks",
+  "sharp text",
+  "readable text",
+  "rectangular layout",
+];
 
 const ANALYSIS_SCHEMA = {
   type: "object",
@@ -35,6 +56,12 @@ const ANALYSIS_SCHEMA = {
 function buildImagePrompt() {
   return [
     "Analyze the given image and determine if it is AI-generated or real.",
+    "Carefully distinguish between:",
+    "1. AI-generated images",
+    "2. Screenshots of applications or web pages",
+    "Screenshots should NOT be classified as AI-generated content.",
+    "Before the final verdict, first check whether the image appears to be a screenshot with UI elements, browser bars, app layouts, sharp readable text, or a consistent rectangular interface layout.",
+    "If it is a screenshot, classify it as Real and explain the interface cues that support that decision.",
     "Carefully inspect for obvious visual manipulations such as glowing eyes or laser effects, unnatural lighting, added visual effects, overlays, or edits.",
     "You MUST explicitly mention these if present.",
     "",
@@ -47,6 +74,7 @@ function buildImagePrompt() {
     "* distorted ears, teeth, or fine details",
     "* overly perfect symmetry",
     "* edited effects, overlays, or obvious visual manipulation",
+    "* whether the image is actually a screenshot of a digital interface rather than a generated scene",
     "",
     "Provide:",
     "1. Final verdict (Real / AI Generated)",
@@ -153,6 +181,7 @@ function shouldForceFake(...values) {
 
 function sanitizeDisplayText(value = "") {
   return String(value || "")
+    .replace(/Screenshots should NOT be classified as AI-generated content\./gi, "")
     .replace(/ai-generated/gi, "fake")
     .replace(/artificial/gi, "fake")
     .replace(/synthetic/gi, "fake")
@@ -180,6 +209,32 @@ function detectVisualAnomalies(reasoning = "") {
       normalized.includes("edited") ||
       normalized.includes("unnatural lighting"),
   };
+}
+
+function detectScreenshot(reasoning = "", ...extraValues) {
+  const combined = [reasoning, ...extraValues]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  const hitCount = SCREENSHOT_INDICATOR_TERMS.filter((term) => combined.includes(term)).length;
+  const hasScreenshotLabel = combined.includes("screenshot") || combined.includes("screen capture");
+  const hasInterfaceStructure =
+    (combined.includes("button") || combined.includes("buttons")) &&
+    (combined.includes("text") || combined.includes("menu") || combined.includes("layout"));
+  const hasUiPattern =
+    (combined.includes("browser") || combined.includes("app") || combined.includes("interface")) &&
+    (combined.includes("sharp text") || combined.includes("readable text") || combined.includes("rectangular"));
+
+  return hasScreenshotLabel || hitCount >= 2 || hasInterfaceStructure || hasUiPattern;
+}
+
+function screenshotReasonBullets() {
+  return [
+    "• This appears to be a screenshot of a digital interface",
+    "• Presence of structured UI elements and readable text",
+    "• No signs of generative image artifacts",
+  ].join("\n");
 }
 
 function toReasonBullets(reasoning = "", fallbackVerdict = "Fake") {
@@ -243,24 +298,39 @@ function normalizeFrameResult(result) {
 }
 
 function toUiResult(frameResult, extra = {}) {
+  const screenshotDetected = detectScreenshot(
+    frameResult.reasoning,
+    extra?.context,
+    extra?.analysisMode,
+    extra?.verdict
+  );
   const forceFake = shouldForceFake(frameResult.verdict, frameResult.reasoning, extra?.context);
   const baseScore =
     frameResult.verdict === "Real" ? frameResult.confidence : Math.max(0, 100 - frameResult.confidence);
   const rawTrustScore = Math.max(0, Math.min(100, baseScore));
-  const status = forceFake
-    ? "Fake"
-    : rawTrustScore <= 45
+  const status = screenshotDetected
+    ? "Real"
+    : forceFake
       ? "Fake"
-      : rawTrustScore <= 85
-        ? "Suspicious"
-        : "Real";
-  const trustScore = coerceTrustScoreByStatus(status, rawTrustScore);
+      : rawTrustScore <= 45
+        ? "Fake"
+        : rawTrustScore <= 85
+          ? "Suspicious"
+          : "Real";
+  const trustScore = screenshotDetected
+    ? Math.max(90, coerceTrustScoreByStatus("Real", rawTrustScore))
+    : coerceTrustScoreByStatus(status, rawTrustScore);
 
   return normalizeResult({
     status,
     trustScore,
-    reason: toReasonBullets(frameResult.reasoning, status),
-    context: toShortContext(frameResult.reasoning, status),
+    reason: screenshotDetected
+      ? screenshotReasonBullets()
+      : toReasonBullets(frameResult.reasoning, status),
+    context: screenshotDetected
+      ? "The content appears to be a screenshot of a structured digital interface."
+      : toShortContext(frameResult.reasoning, status),
+    screenshotDetected,
     ...extra,
   });
 }

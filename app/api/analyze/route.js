@@ -5,7 +5,7 @@ const GEMINI_URL =
 const MAX_VIDEO_FRAMES = 10;
 const GEMINI_RETRY_COUNT = 3;
 const GEMINI_RETRY_DELAY_MS = 1000;
-const GEMINI_TIMEOUT_MS = 10000;
+const GEMINI_TIMEOUT_MS = 20000;
 const FAKE_OVERRIDE_TERMS = [
   "ai-generated",
   "synthetic",
@@ -165,9 +165,7 @@ function buildVideoPrompt(frameLabel = "") {
 }
 
 function getModelText(responseJson) {
-  return (
-    responseJson?.candidates?.[0]?.content?.parts?.find((part) => part.text)?.text || ""
-  );
+  return responseJson?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
 function parseGeminiJson(text) {
@@ -494,16 +492,22 @@ async function callGemini(apiKey, parts) {
     });
 
     const geminiJson = await geminiResponse.json().catch(() => ({}));
+    console.log("AI RAW RESPONSE:", geminiJson);
 
     if (!geminiResponse.ok) {
       throw new Error(geminiJson?.error?.message || "Gemini request failed. Please try again.");
     }
 
     const modelText = getModelText(geminiJson);
+
+    if (!modelText) {
+      throw new Error("Empty AI response");
+    }
+
     const parsed = parseGeminiJson(modelText);
 
     if (!parsed) {
-      throw new Error("Empty response");
+      throw new Error("Empty AI response");
     }
 
     return normalizeFrameResult(parsed);
@@ -513,18 +517,11 @@ async function callGemini(apiKey, parts) {
 }
 
 async function requestGemini(apiKey, parts) {
-  let result = null;
   let lastError = null;
 
   for (let attempt = 0; attempt < GEMINI_RETRY_COUNT; attempt += 1) {
     try {
-      result = await callGemini(apiKey, parts);
-
-      if (result) {
-        break;
-      }
-
-      throw new Error("Empty response");
+      return await callGemini(apiKey, parts);
     } catch (err) {
       lastError = err;
       console.log("API ERROR:", err);
@@ -535,24 +532,20 @@ async function requestGemini(apiKey, parts) {
     }
   }
 
-  if (!result) {
-    throw lastError || new Error("Empty response");
-  }
-
-  return result;
+  throw lastError || new Error("Empty AI response");
 }
 
 async function analyzeImage(apiKey, image) {
   try {
     return await requestGemini(apiKey, [
       {
-        text: buildImagePrompt(),
-      },
-      {
         inlineData: {
           mimeType: image.mimeType || "image/jpeg",
           data: image.data,
         },
+      },
+      {
+        text: buildImagePrompt(),
       },
     ]);
   } catch (err) {
@@ -573,13 +566,13 @@ async function analyzeVideoFrames(apiKey, frames = []) {
     try {
       const result = await requestGemini(apiKey, [
         {
-          text: buildVideoPrompt(frameLabel),
-        },
-        {
           inlineData: {
             mimeType: frame.mimeType || "image/jpeg",
             data: frame.data,
           },
+        },
+        {
+          text: buildVideoPrompt(frameLabel),
         },
       ]);
 

@@ -29,10 +29,14 @@ const MAX_VIDEO_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_ANALYZE_VIDEO_FRAMES = 3;
 const LOCAL_VIDEO_PREFIX = "local-video://";
 const FREE_USAGE_STORAGE_KEY = "free_usage_count";
-const LOADING_PHASES = ["Analyzing...", "Detecting patterns...", "Finalizing result..."];
+const LOADING_PHASES = [
+  "Analyzing... This may take a few seconds",
+  "Detecting patterns...",
+  "Finalizing result...",
+];
 const ANALYSIS_RETRY_COUNT = 3;
 const ANALYSIS_RETRY_DELAY_MS = 1000;
-const ANALYSIS_TIMEOUT_MS = 10000;
+const ANALYSIS_TIMEOUT_MS = 20000;
 
 function createSafeAnalysisFallback() {
   return {
@@ -1006,7 +1010,9 @@ export default function HomePage() {
 
     for (let attempt = 0; attempt < ANALYSIS_RETRY_COUNT; attempt += 1) {
       try {
-        setBusyMessage(attempt === 0 ? "Analyzing..." : "Retrying...");
+        setBusyMessage(
+          attempt === 0 ? "Analyzing... This may take a few seconds" : "Retrying..."
+        );
         const data = await requestAnalysis(payload);
 
         if (!data || Object.keys(data).length === 0) {

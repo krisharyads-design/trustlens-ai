@@ -35,6 +35,30 @@ const SCREENSHOT_INDICATOR_TERMS = [
   "readable text",
   "rectangular layout",
 ];
+const AI_FACE_CUE_TERMS = [
+  "overly smooth skin",
+  "smooth skin texture",
+  "waxy skin",
+  "plastic skin",
+  "lack of pores",
+  "lacks pores",
+  "lack of natural imperfections",
+  "lacks natural imperfections",
+  "lack of micro-imperfections",
+  "no natural noise",
+  "too perfect",
+  "perfect lighting",
+  "uniform lighting",
+  "lighting is uniformly",
+  "unusually symmetrical",
+  "perfect symmetry",
+  "symmetrical facial features",
+  "hair strand blending",
+  "hair blends",
+  "background blur inconsistencies",
+  "inconsistent background blur",
+  "facial realism",
+];
 
 const ANALYSIS_SCHEMA = {
   type: "object",
@@ -59,14 +83,22 @@ function buildImagePrompt() {
     "Carefully distinguish between:",
     "1. AI-generated images",
     "2. Screenshots of applications or web pages",
-    "Screenshots should NOT be classified as AI-generated content.",
-    "Before the final verdict, first check whether the image appears to be a screenshot with UI elements, browser bars, app layouts, sharp readable text, or a consistent rectangular interface layout.",
-    "If it is a screenshot, classify it as Real and explain the interface cues that support that decision.",
+    "Do NOT assume a clean, high-quality, or rectangular image is a screenshot.",
+    "Only classify an image as a screenshot if visible UI elements are clearly present, such as buttons, readable interface text, browser chrome, app controls, menus, or a clear interface layout.",
+    "If there are no clear UI elements, do not call it a screenshot.",
+    "If it is clearly a screenshot, classify it as Real and explain the visible interface cues that support that decision.",
     "Carefully inspect for obvious visual manipulations such as glowing eyes or laser effects, unnatural lighting, added visual effects, overlays, or edits.",
     "You MUST explicitly mention these if present.",
+    "Even if the image looks realistic, evaluate whether it may be AI-generated based on subtle inconsistencies in texture, lighting, and facial realism.",
     "",
     "Check for:",
     "* unnatural skin texture or overly smooth areas",
+    "* overly smooth skin texture",
+    "* unnaturally perfect or uniformly distributed lighting",
+    "* symmetrical facial features that look unusually perfect",
+    "* unnatural hair strand blending",
+    "* background blur inconsistencies",
+    "* lack of micro-imperfections such as pores, skin texture, camera noise, or tiny blemishes",
     "* inconsistent lighting or shadows",
     "* asymmetry in facial features",
     "* unnatural eye reflections or mismatched pupils",
@@ -74,7 +106,11 @@ function buildImagePrompt() {
     "* distorted ears, teeth, or fine details",
     "* overly perfect symmetry",
     "* edited effects, overlays, or obvious visual manipulation",
-    "* whether the image is actually a screenshot of a digital interface rather than a generated scene",
+    "* whether visible UI elements prove the image is actually a screenshot of a digital interface rather than a photo or generated scene",
+    "",
+    "Classification rule:",
+    "* If a human face looks too perfect, lighting is too uniform, and natural noise or skin micro-detail is missing, classify it as AI Generated or at least strongly suspicious.",
+    "* Do not use a screenshot label unless visible UI, buttons, readable interface text, browser chrome, or a clear app/web layout is present.",
     "",
     "Provide:",
     "1. Final verdict (Real / AI Generated)",
@@ -91,10 +127,17 @@ function buildVideoPrompt(frameLabel = "") {
     "Analyze this video frame and determine if the human face shown looks AI-generated or real.",
     "Carefully inspect for obvious visual manipulations such as glowing eyes or laser effects, unnatural lighting, added visual effects, overlays, or edits.",
     "You MUST explicitly mention these if present.",
+    "Even if the face looks realistic, evaluate whether it may be AI-generated based on subtle inconsistencies in texture, lighting, and facial realism.",
     frameLabel ? `Frame context: ${frameLabel}` : "",
     "",
     "Check for:",
     "* unnatural skin texture or overly smooth areas",
+    "* overly smooth skin texture",
+    "* unnaturally perfect or uniformly distributed lighting",
+    "* symmetrical facial features that look unusually perfect",
+    "* unnatural hair strand blending",
+    "* background blur inconsistencies",
+    "* lack of micro-imperfections such as pores, skin texture, camera noise, or tiny blemishes",
     "* inconsistent lighting or shadows",
     "* asymmetry in facial features",
     "* unnatural eye reflections or mismatched pupils",
@@ -102,6 +145,9 @@ function buildVideoPrompt(frameLabel = "") {
     "* distorted ears, teeth, or fine details",
     "* overly perfect symmetry",
     "* edited effects, overlays, or obvious visual manipulation",
+    "",
+    "Classification rule:",
+    "* If the face looks too perfect, lighting is too uniform, and natural noise or skin micro-detail is missing, classify it as AI Generated or at least strongly suspicious.",
     "",
     "Provide:",
     "1. Final verdict (Real / AI Generated)",
@@ -176,6 +222,21 @@ function shouldForceFake(...values) {
     .join(" ")
     .toLowerCase();
 
+  if (
+    combined.includes("no signs of ai-generated") ||
+    combined.includes("no evidence of ai-generated") ||
+    combined.includes("not ai-generated") ||
+    combined.includes("does not appear ai-generated") ||
+    combined.includes("doesn't appear ai-generated") ||
+    combined.includes("no signs of synthetic") ||
+    combined.includes("no evidence of synthetic") ||
+    combined.includes("not synthetic") ||
+    combined.includes("no signs of generated") ||
+    combined.includes("no evidence of generated")
+  ) {
+    return false;
+  }
+
   return FAKE_OVERRIDE_TERMS.some((term) => combined.includes(term));
 }
 
@@ -211,6 +272,28 @@ function detectVisualAnomalies(reasoning = "") {
   };
 }
 
+function detectAiFaceCues(reasoning = "") {
+  const normalized = String(reasoning || "").toLowerCase();
+  const cueCount = AI_FACE_CUE_TERMS.filter((term) => normalized.includes(term)).length;
+  const hasFaceOrPortraitContext =
+    normalized.includes("face") ||
+    normalized.includes("facial") ||
+    normalized.includes("portrait") ||
+    normalized.includes("skin") ||
+    normalized.includes("hair");
+  const hasTextureLightingPair =
+    (normalized.includes("smooth") ||
+      normalized.includes("pores") ||
+      normalized.includes("imperfections") ||
+      normalized.includes("noise")) &&
+    (normalized.includes("lighting") || normalized.includes("symmetry") || normalized.includes("blur"));
+
+  return {
+    cueCount,
+    suspicious: hasFaceOrPortraitContext && (cueCount >= 2 || hasTextureLightingPair),
+  };
+}
+
 function detectScreenshot(reasoning = "", ...extraValues) {
   const combined = [reasoning, ...extraValues]
     .filter(Boolean)
@@ -219,14 +302,41 @@ function detectScreenshot(reasoning = "", ...extraValues) {
 
   const hitCount = SCREENSHOT_INDICATOR_TERMS.filter((term) => combined.includes(term)).length;
   const hasScreenshotLabel = combined.includes("screenshot") || combined.includes("screen capture");
+  const deniesScreenshot =
+    combined.includes("not a screenshot") ||
+    combined.includes("not screenshot") ||
+    combined.includes("do not call it a screenshot") ||
+    combined.includes("no clear ui") ||
+    combined.includes("no ui elements") ||
+    combined.includes("without ui elements");
+  const hasUiChrome =
+    combined.includes("browser bar") ||
+    combined.includes("browser window") ||
+    combined.includes("address bar") ||
+    combined.includes("toolbar") ||
+    combined.includes("app controls") ||
+    combined.includes("application interface");
   const hasInterfaceStructure =
     (combined.includes("button") || combined.includes("buttons")) &&
     (combined.includes("text") || combined.includes("menu") || combined.includes("layout"));
   const hasUiPattern =
     (combined.includes("browser") || combined.includes("app") || combined.includes("interface")) &&
     (combined.includes("sharp text") || combined.includes("readable text") || combined.includes("rectangular"));
+  const hasReadableInterfaceText =
+    (combined.includes("readable text") || combined.includes("sharp text")) &&
+    (combined.includes("interface") || combined.includes("ui") || combined.includes("web page"));
 
-  return hasScreenshotLabel || hitCount >= 2 || hasInterfaceStructure || hasUiPattern;
+  if (deniesScreenshot) {
+    return false;
+  }
+
+  return (
+    (hasScreenshotLabel && (hasUiChrome || hasInterfaceStructure || hasUiPattern || hasReadableInterfaceText)) ||
+    hasUiChrome ||
+    hasInterfaceStructure ||
+    hasUiPattern ||
+    (hitCount >= 3 && hasReadableInterfaceText)
+  );
 }
 
 function screenshotReasonBullets() {
@@ -240,6 +350,7 @@ function screenshotReasonBullets() {
 function toReasonBullets(reasoning = "", fallbackVerdict = "Fake") {
   const cleaned = sanitizeDisplayText(reasoning);
   const anomalies = detectVisualAnomalies(reasoning);
+  const aiFaceCues = detectAiFaceCues(reasoning);
 
   const parts = cleaned
     .split(/[\.\;\n]+/)
@@ -254,6 +365,11 @@ function toReasonBullets(reasoning = "", fallbackVerdict = "Fake") {
     prioritized.push("Artificial visual effect or overlay detected");
   } else if (anomalies.manipulated) {
     prioritized.push("Edited or manipulated visual content detected");
+  }
+
+  if (aiFaceCues.suspicious) {
+    prioritized.push("Skin appears overly smooth or lacks natural micro-imperfections");
+    prioritized.push("Lighting or facial realism shows unusually perfect synthetic traits");
   }
 
   const mergedParts = [...prioritized];
@@ -304,6 +420,7 @@ function toUiResult(frameResult, extra = {}) {
     extra?.analysisMode,
     extra?.verdict
   );
+  const aiFaceCues = detectAiFaceCues(frameResult.reasoning);
   const forceFake = shouldForceFake(frameResult.verdict, frameResult.reasoning, extra?.context);
   const baseScore =
     frameResult.verdict === "Real" ? frameResult.confidence : Math.max(0, 100 - frameResult.confidence);
@@ -312,7 +429,9 @@ function toUiResult(frameResult, extra = {}) {
     ? "Real"
     : forceFake
       ? "Fake"
-      : rawTrustScore <= 45
+      : aiFaceCues.suspicious && rawTrustScore > 70
+        ? "Suspicious"
+        : rawTrustScore <= 45
         ? "Fake"
         : rawTrustScore <= 85
           ? "Suspicious"

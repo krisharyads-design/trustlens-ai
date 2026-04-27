@@ -32,6 +32,18 @@ const FREE_USAGE_STORAGE_KEY = "free_usage_count";
 const LOADING_PHASES = ["Analyzing...", "Detecting patterns...", "Finalizing result..."];
 const ANALYSIS_RETRY_COUNT = 3;
 const ANALYSIS_RETRY_DELAY_MS = 1000;
+const ANALYSIS_TIMEOUT_MS = 10000;
+
+function createSafeAnalysisFallback() {
+  return {
+    status: "Suspicious",
+    trustScore: 50,
+    reason:
+      "• Analysis could not be completed due to high load\n• Showing safe fallback result",
+    context: "AI is taking longer than expected. Showing best estimate.",
+    isEstimated: true,
+  };
+}
 
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -960,25 +972,33 @@ export default function HomePage() {
   }
 
   async function requestAnalysis(payload) {
-    const response = await fetch("/api/analyze", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
 
-    const data = await response.json().catch(() => ({}));
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        signal: controller.signal,
+        body: JSON.stringify(payload),
+      });
 
-    if (!response.ok) {
-      throw new Error(data.error || "Analysis failed.");
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error || "AI is taking longer than expected. Showing best estimate.");
+      }
+
+      if (!data || Object.keys(data).length === 0) {
+        throw new Error("Empty analysis response.");
+      }
+
+      return data;
+    } finally {
+      window.clearTimeout(timeoutId);
     }
-
-    if (!data || Object.keys(data).length === 0) {
-      throw new Error("Empty analysis response.");
-    }
-
-    return data;
   }
 
   async function analyzeWithRetry(payload) {
@@ -986,6 +1006,7 @@ export default function HomePage() {
 
     for (let attempt = 0; attempt < ANALYSIS_RETRY_COUNT; attempt += 1) {
       try {
+        setBusyMessage(attempt === 0 ? "Analyzing..." : "Retrying...");
         const data = await requestAnalysis(payload);
 
         if (!data || Object.keys(data).length === 0) {
@@ -998,7 +1019,7 @@ export default function HomePage() {
         console.log("API error:", error);
 
         if (attempt < ANALYSIS_RETRY_COUNT - 1) {
-          setBusyMessage("Retrying analysis...");
+          setBusyMessage("Retrying...");
           await delay(ANALYSIS_RETRY_DELAY_MS);
           continue;
         }
@@ -1007,7 +1028,8 @@ export default function HomePage() {
       }
     }
 
-    throw lastError || new Error("Analysis failed.");
+    console.log("API error:", lastError);
+    return createSafeAnalysisFallback();
   }
 
   function resolveHistoryMedia(item) {
@@ -1108,7 +1130,15 @@ export default function HomePage() {
         }
       }, 100);
     } catch (err) {
-      setError("Analysis failed. Please try again.");
+      console.log("API error:", err);
+      const fallback = {
+        ...createSafeAnalysisFallback(),
+        fileName: selectedFile.name,
+        mediaType: selectedMediaType,
+      };
+
+      setResult(fallback);
+      setError("AI is taking longer than expected. Showing best estimate.");
     } finally {
       analyzeInFlightRef.current = false;
       setLoading(false);

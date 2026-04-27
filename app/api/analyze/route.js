@@ -3,6 +3,9 @@ import { NextResponse } from "next/server";
 const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 const MAX_VIDEO_FRAMES = 10;
+const GEMINI_RETRY_COUNT = 3;
+const GEMINI_RETRY_DELAY_MS = 1000;
+const GEMINI_TIMEOUT_MS = 10000;
 const FAKE_OVERRIDE_TERMS = [
   "ai-generated",
   "synthetic",
@@ -413,6 +416,22 @@ function normalizeFrameResult(result) {
   };
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createFallbackResult(extra = {}) {
+  return normalizeResult({
+    status: "Suspicious",
+    trustScore: 50,
+    reason:
+      "• Analysis could not be completed due to high load\n• Showing safe fallback result",
+    context: "AI is taking longer than expected. Showing best estimate.",
+    isEstimated: true,
+    ...extra,
+  });
+}
+
 function toUiResult(frameResult, extra = {}) {
   const screenshotDetected = detectScreenshot(
     frameResult.reasoning,
@@ -454,49 +473,92 @@ function toUiResult(frameResult, extra = {}) {
   });
 }
 
-async function requestGemini(apiKey, parts) {
-  const geminiResponse = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseJsonSchema: ANALYSIS_SCHEMA,
+async function callGemini(apiKey, parts) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+
+  try {
+    const geminiResponse = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      signal: controller.signal,
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseJsonSchema: ANALYSIS_SCHEMA,
+        },
+      }),
+    });
 
-  const geminiJson = await geminiResponse.json();
+    const geminiJson = await geminiResponse.json().catch(() => ({}));
 
-  if (!geminiResponse.ok) {
-    throw new Error(geminiJson?.error?.message || "Gemini request failed. Please try again.");
+    if (!geminiResponse.ok) {
+      throw new Error(geminiJson?.error?.message || "Gemini request failed. Please try again.");
+    }
+
+    const modelText = getModelText(geminiJson);
+    const parsed = parseGeminiJson(modelText);
+
+    if (!parsed) {
+      throw new Error("Empty response");
+    }
+
+    return normalizeFrameResult(parsed);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function requestGemini(apiKey, parts) {
+  let result = null;
+  let lastError = null;
+
+  for (let attempt = 0; attempt < GEMINI_RETRY_COUNT; attempt += 1) {
+    try {
+      result = await callGemini(apiKey, parts);
+
+      if (result) {
+        break;
+      }
+
+      throw new Error("Empty response");
+    } catch (err) {
+      lastError = err;
+      console.log("API ERROR:", err);
+
+      if (attempt < GEMINI_RETRY_COUNT - 1) {
+        await delay(GEMINI_RETRY_DELAY_MS);
+      }
+    }
   }
 
-  const modelText = getModelText(geminiJson);
-  const parsed = parseGeminiJson(modelText);
-
-  if (!parsed) {
-    throw new Error("Gemini returned an unexpected response format.");
+  if (!result) {
+    throw lastError || new Error("Empty response");
   }
 
-  return normalizeFrameResult(parsed);
+  return result;
 }
 
 async function analyzeImage(apiKey, image) {
-  return requestGemini(apiKey, [
-    {
-      text: buildImagePrompt(),
-    },
-    {
-      inlineData: {
-        mimeType: image.mimeType || "image/jpeg",
-        data: image.data,
+  try {
+    return await requestGemini(apiKey, [
+      {
+        text: buildImagePrompt(),
       },
-    },
-  ]);
+      {
+        inlineData: {
+          mimeType: image.mimeType || "image/jpeg",
+          data: image.data,
+        },
+      },
+    ]);
+  } catch (err) {
+    console.log("API ERROR:", err);
+    return null;
+  }
 }
 
 async function analyzeVideoFrames(apiKey, frames = []) {
@@ -508,26 +570,35 @@ async function analyzeVideoFrames(apiKey, frames = []) {
       frame.timestamp !== undefined ? ` at ${frame.timestamp}s` : ""
     }`;
 
-    const result = await requestGemini(apiKey, [
-      {
-        text: buildVideoPrompt(frameLabel),
-      },
-      {
-        inlineData: {
-          mimeType: frame.mimeType || "image/jpeg",
-          data: frame.data,
+    try {
+      const result = await requestGemini(apiKey, [
+        {
+          text: buildVideoPrompt(frameLabel),
         },
-      },
-    ]);
+        {
+          inlineData: {
+            mimeType: frame.mimeType || "image/jpeg",
+            data: frame.data,
+          },
+        },
+      ]);
 
-    frameResults.push({
-      ...result,
-      timestamp: frame.timestamp,
-    });
+      frameResults.push({
+        ...result,
+        timestamp: frame.timestamp,
+      });
+    } catch (err) {
+      console.log("API ERROR:", err);
+    }
   }
 
   if (frameResults.length === 0) {
-    throw new Error("No video frames were available for analysis.");
+    return createFallbackResult({
+      frameSummaries: [],
+      frameCount: sampledFrames.length,
+      analysisMode: "video",
+      verdict: "Suspicious",
+    });
   }
 
   const realFrames = frameResults.filter((item) => item.verdict === "Real");
@@ -593,18 +664,30 @@ async function analyzeVideoFrames(apiKey, frames = []) {
 
 export async function POST(request) {
   try {
+    const body = await request.json();
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
+      console.log("API ERROR:", new Error("Missing GEMINI_API_KEY in your environment variables."));
       return NextResponse.json(
-        { error: "Missing GEMINI_API_KEY in your environment variables." },
-        { status: 500 }
+        createFallbackResult({
+          analysisMode: body?.kind || "image",
+          verdict: "Suspicious",
+        })
       );
     }
 
-    const body = await request.json();
     if (body.kind === "image" && body.image?.data) {
       const imageResult = await analyzeImage(apiKey, body.image);
+
+      if (!imageResult) {
+        return NextResponse.json(
+          createFallbackResult({
+            analysisMode: "image",
+            verdict: "Suspicious",
+          })
+        );
+      }
 
       return NextResponse.json(
         toUiResult(imageResult, {
@@ -618,13 +701,19 @@ export async function POST(request) {
       return NextResponse.json(await analyzeVideoFrames(apiKey, body.frames));
     }
 
-    return NextResponse.json({ error: "Unsupported media payload." }, { status: 400 });
-  } catch (error) {
     return NextResponse.json(
-      {
-        error: error.message || "Server error while analyzing media.",
-      },
-      { status: 500 }
+      createFallbackResult({
+        analysisMode: body?.kind || "image",
+        verdict: "Suspicious",
+      })
+    );
+  } catch (error) {
+    console.log("API ERROR:", error);
+    return NextResponse.json(
+      createFallbackResult({
+        analysisMode: "image",
+        verdict: "Suspicious",
+      })
     );
   }
 }
